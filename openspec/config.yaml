@@ -1,32 +1,66 @@
 schema: spec-driven
 
-# Project context (optional)
-# Add only constraints that should guide OpenSpec artifacts and workflows.
-# Include constraints an agent cannot infer by reading the code.
-# Keep general project documentation and discoverable codebase facts out.
-# Example:
-#   context: |
-#     Designs and tasks must cover Windows, macOS, and Linux
-#     Write all artifacts in Spanish
+context: |
+  Purpose: public portfolio demo. A RAG chatbot that answers questions over a
+  document corpus (see Domain). Goal is to showcase backend, Python and
+  LangChain skills; users are the author and any public visitor.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always state what is out of scope
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  Domain: customer support for a fictional PayPal-like payments company.
+  The corpus is synthetic support documentation (FAQs, policies, help articles)
+  for that fictional company, written in English and currently stored as PDF
+  files.
+  Never use real company names, branding or data.
 
-# Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+  Roadmap: the RAG will later evolve into a LangGraph support agent able to
+  resolve cases. Not in scope yet; do not add agent/graph features until a
+  proposal introduces them, and do not add abstractions in anticipation of it.
+
+  Source of truth: openspec/specs/ is authoritative. Every observable behavior
+  change MUST go through an OpenSpec change (proposal + deltas) or be
+  regularized as one. User-facing behavior (API contracts, UI, answers) not
+  described in openspec/specs/ is a defect, even if the code works.
+
+  Language: all OpenSpec artifacts, code, identifiers and comments in English.
+
+  Stack (fixed, do not propose alternatives without a proposal):
+  - Backend: Python 3.14, Poetry, FastAPI, LangChain.
+  - LLM and embeddings: OpenAI only.
+  - Tracing and evaluation: LangSmith.
+  - Database: PostgreSQL with pgvector as the vector store, run via Docker.
+  - Frontend: Next.js + TypeScript (strict) + Tailwind CSS.
+  - Quality tooling: ruff + mypy --strict (backend), ESLint + `tsc --noEmit`
+    (frontend).
+  - Typing: no `any`, `@ts-ignore` or `as unknown as X` in TypeScript. In
+    Python avoid `# type: ignore` and `cast(Any, ...)`; when a third-party
+    library forces it, use the specific error code (e.g.
+    `# type: ignore[arg-type]`) with a comment explaining why. Packages without
+    stubs go in `[[tool.mypy.overrides]]` with `ignore_missing_imports` in
+    pyproject.toml, never by relaxing mypy globally.
+  - Corpus embeddings are computed once at ingestion, never per query.
+
+  Environment:
+  - Must run locally on Windows (Docker Desktop + WSL2). Scripts and commands
+    must work on Windows: no bash-only scripts or Unix-only paths.
+  - Deployment target undecided; do not couple code to a specific provider.
+  - Secrets only via environment variables; never committed. Provide a
+    .env.example.
+
+  Testing strategy:
+  - Tests exercise behavior through public interfaces (HTTP API, UI), not
+    internals. Do not mock internal modules.
+  - Primary layers: API integration tests (pytest + FastAPI client against a
+    real PostgreSQL/pgvector container) and E2E tests (Playwright).
+  - Unit tests only for pure, non-trivial logic (e.g. chunking, rate limiting).
+  - Automated tests MUST NOT call the real OpenAI API; use a fake LLM and fake
+    embeddings. Answer quality is measured with LangSmith evals, run manually.
+
+rules:
+  specs:
+    - Write requirements in English using RFC 2119 normative keywords (MUST/SHALL).
+    - Reuse terms already defined in the living specs; do not introduce synonyms for existing concepts.
+  proposal:
+    - Record every business decision with the date it was made, formatted YYYY-MM-DD.
+  design:
+    - No new dependency without a written justification.
+  tasks:
+    - Every spec scenario MUST trace to a test by name. Deterministic scenarios trace to pytest/Playwright tests; answer-quality scenarios trace to a LangSmith eval dataset instead.
