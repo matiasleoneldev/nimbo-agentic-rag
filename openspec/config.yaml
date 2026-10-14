@@ -5,9 +5,9 @@ context: |
   document corpus (see Domain). Goal is to showcase backend, Python and
   LangChain skills; users are the author and any public visitor.
 
-  Domain: customer support for a fictional PayPal-like payments company.
+  Domain: customer support for a fictional PayPal-like payments company, called Nimbo.
   The corpus is synthetic support documentation (FAQs, policies, help articles)
-  for that fictional company, written in English and currently stored as PDF
+  for that fictional company, written in Spanish and currently stored as PDF
   files.
   Never use real company names, branding or data.
 

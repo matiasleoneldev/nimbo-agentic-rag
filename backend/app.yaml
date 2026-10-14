@@ -1,0 +1,27 @@
+# Runtime configuration for the Nimbo RAG backend.
+
+paths:
+  manifest: nimbo-help-center/manifest.json
+  # Base directory for the manifest's `file_path` entries.
+  help_center_dir: nimbo-help-center
+
+# Display labels for the identifiers used in manifest.json.
+# Identifiers are stable and used for filtering; labels are only for display
+# and for prefixing chunk text before embedding.
+labels:
+  products:
+    personal: "Cuenta Personal"
+    business: "Cuenta de Negocios"
+  categories:
+    account_security: "Cuenta y seguridad"
+    send_receive: "Enviar y recibir dinero"
+    fees_limits: "Comisiones y límites"
+    payments_purchases: "Pagos y compras"
+    refunds_disputes: "Reembolsos y disputas"
+    business: "Negocios"
+    nimbo_card: "Tarjeta Nimbo"
+  countries:
+    AR: "Argentina"
+    MX: "México"
+    CO: "Colombia"
+    CL: "Chile"
