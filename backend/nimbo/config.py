@@ -1,0 +1,48 @@
+"""Runtime settings: `backend/app.yaml` plus environment variables."""
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+REPO_ROOT = BACKEND_DIR.parent
+CONFIG_FILE = BACKEND_DIR / "app.yaml"
+ENV_FILE = BACKEND_DIR / ".env"
+
+
+@dataclass(frozen=True)
+class Settings:
+    manifest_path: Path
+    help_center_dir: Path
+    chat_model: str
+    embedding_model: str
+    vector_size: int
+    retrieval_k: int
+    table: str
+    # labels[group][identifier] -> display label, e.g. labels["countries"]["AR"] == "Argentina"
+    labels: dict[str, dict[str, str]]
+
+
+def load_settings(config_file: Path = CONFIG_FILE) -> Settings:
+    raw = yaml.safe_load(config_file.read_text(encoding="utf-8"))
+    # Relative paths in app.yaml are relative to the repo root, never to the cwd.
+    root = config_file.resolve().parent.parent
+    return Settings(
+        manifest_path=root / raw["paths"]["manifest"],
+        help_center_dir=root / raw["paths"]["help_center_dir"],
+        chat_model=raw["models"]["chat"],
+        embedding_model=raw["models"]["embeddings"],
+        vector_size=int(raw["models"]["vector_size"]),
+        retrieval_k=int(raw["retrieval"]["k"]),
+        table=raw["retrieval"]["table"],
+        labels=raw["labels"],
+    )
+
+
+def require_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"Environment variable {name} is not set (see backend/.env.example).")
+    return value

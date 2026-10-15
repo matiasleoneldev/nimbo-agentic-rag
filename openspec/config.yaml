@@ -26,7 +26,7 @@ context: |
   - Backend: Python 3.14, Poetry, FastAPI, LangChain.
   - LLM and embeddings: OpenAI only.
   - Tracing and evaluation: LangSmith.
-  - Database: PostgreSQL with pgvector as the vector store, run via Docker.
+  - Database: PostgreSQL with pgvector as the vector store, run via Docker (image pgvector/pgvector:pg17).
   - Frontend: Next.js + TypeScript (strict) + Tailwind CSS.
   - Quality tooling: ruff + mypy --strict (backend), ESLint + `tsc --noEmit`
     (frontend).

@@ -1,0 +1,16 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: nimbo
+      POSTGRES_PASSWORD: nimbo
+      POSTGRES_DB: nimbo
+    ports:
+      # Local only: dev credentials must not be reachable from the network.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+
+volumes:
+  pgdata:

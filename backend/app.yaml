@@ -1,9 +1,21 @@
 # Runtime configuration for the Nimbo RAG backend.
+# Relative paths are resolved against the repository root (the parent of backend/).
 
 paths:
   manifest: nimbo-help-center/manifest.json
   # Base directory for the manifest's `file_path` entries.
   help_center_dir: nimbo-help-center
+
+# OpenAI model ids. `vector_size` must match the embeddings model output size.
+models:
+  chat: gpt-4.1-mini
+  embeddings: text-embedding-3-large
+  vector_size: 3072
+
+retrieval:
+  # Number of indexed documents passed to the model per question.
+  k: 8
+  table: help_center_documents
 
 # Display labels for the identifiers used in manifest.json.
 # Identifiers are stable and used for filtering; labels are only for display

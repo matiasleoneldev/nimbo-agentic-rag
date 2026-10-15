@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "app/page.tsx"
+        ],
+        "createdAt": "2026-10-14T21:03:32.306Z",
+        "reason": "Claude triage: slate-700 sits on white; on hover the text switches to sky-900 over sky-50, so no gray-on-color state exists"
+      }
+    ]
+  }
+}
