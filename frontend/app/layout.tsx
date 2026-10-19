@@ -1,20 +1,24 @@
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
 import "./globals.css";
+import { dictionaries, getLanguage } from "./i18n";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "Centro de Ayuda Nimbo",
-  description: "Respuestas sobre tu cuenta, pagos y comisiones de Nimbo (empresa ficticia, demo).",
-};
+// Blocking on purpose: the language comes from Accept-Language, so the first HTML must wait for it.
+export const instant = false;
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export async function generateMetadata(): Promise<Metadata> {
+  const { title, description } = dictionaries[await getLanguage()];
+  return { title, description };
+}
+
+export default async function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="es" className={`${geistSans.variable} h-full antialiased`}>
+    <html lang={await getLanguage()} className={`${geistSans.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );

@@ -40,14 +40,14 @@ const suggestions = (page: Page) =>
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await expect(input(page)).toBeEnabled(); // hydrated
+  await expect(page.getByRole("textbox")).toBeEnabled(); // hydrated, in any language
 });
 
 test("shows title and subtitle", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Centro de Ayuda Nimbo" })).toBeVisible();
   await expect(
     page.getByText(
-      "Hacé tu pregunta sobre tu cuenta, pagos, comisiones o la Tarjeta Nimbo. Respondemos con la información del Centro de Ayuda.",
+      "Hacé tu pregunta sobre tu cuenta, pagos, comisiones o la Tarjeta Nimbo en Argentina, México, Colombia y Chile. Respondemos con la información del Centro de Ayuda.",
     ),
   ).toBeVisible();
 });
@@ -240,4 +240,131 @@ test("centers content at desktop width", async ({ page }, testInfo) => {
   const box = (await page.getByRole("main").boundingBox())!;
   expect(box.width).toBeLessThan(1440);
   expect(Math.abs(box.x - (1440 - box.x - box.width))).toBeLessThanOrEqual(2);
+});
+
+const EN_SUGGESTIONS = [
+  "How much does an instant withdrawal to my bank account cost?",
+  "How do I turn on two-step verification?",
+  "What do I do if a seller didn't send what I bought?",
+  "Why is my money on hold?",
+];
+const EN_TITLE = "Nimbo Help Center";
+const EN_SUBTITLE =
+  "Ask about your account, payments, fees or the Nimbo Card in Argentina, Mexico, Colombia and Chile. We answer with information from the Help Center.";
+
+const enInput = (page: Page) => page.getByRole("textbox", { name: "Your question" });
+const enErrors = (page: Page) =>
+  page.getByRole("list", { name: "Conversation" }).getByRole("alert");
+
+test.describe("page language", () => {
+  test.describe("Spanish", () => {
+    test("shows Spanish for es-AR browser", async ({ page }) => {
+      await expect(page.getByRole("heading", { name: "Centro de Ayuda Nimbo" })).toBeVisible();
+      await expect(page.locator("html")).toHaveAttribute("lang", "es");
+    });
+
+    for (const locale of ["es-ES", "ca-ES", "gl-ES", "eu-ES"]) {
+      test.describe(locale, () => {
+        test.use({ locale });
+        test(`shows Spanish for ${locale} browser`, async ({ page }) => {
+          await expect(page.getByRole("heading", { name: "Centro de Ayuda Nimbo" })).toBeVisible();
+        });
+      });
+    }
+  });
+
+  test.describe("English", () => {
+    test.describe("en-US", () => {
+      test.use({ locale: "en-US" });
+      test("shows English for en-US browser", async ({ page }) => {
+        await expect(page.getByRole("heading", { name: EN_TITLE })).toBeVisible();
+        await expect(page.locator("html")).toHaveAttribute("lang", "en");
+      });
+    });
+
+    test.describe("pt-BR", () => {
+      test.use({ locale: "pt-BR" });
+      test("shows English for pt-BR browser", async ({ page }) => {
+        await expect(page.getByRole("heading", { name: EN_TITLE })).toBeVisible();
+      });
+    });
+
+    test.describe("Spanish not first", () => {
+      test.use({ locale: "en-US", extraHTTPHeaders: { "Accept-Language": "en-US,es;q=0.9" } });
+      test("shows English when Spanish is not first", async ({ page }) => {
+        await expect(page.getByRole("heading", { name: EN_TITLE })).toBeVisible();
+      });
+    });
+
+    test("shows English without Accept-Language", async ({ request }) => {
+      const response = await request.get("/", );
+      const html = await response.text();
+      expect(html).toContain('lang="en"');
+      expect(html).toContain(EN_TITLE);
+    });
+  });
+});
+
+test.describe("English page", () => {
+  test.use({ locale: "en-US" });
+
+  test("keeps source titles as returned in English page", async ({ page }) => {
+    await mockChat(page, reply(200, FEE_ANSWER));
+
+    await enInput(page).fill("How much?");
+    await enInput(page).press("Enter");
+
+    const sources = page.getByRole("list", { name: "Sources" });
+    await expect(sources).toContainText("NIM-020");
+    await expect(sources).toContainText("Comisiones para Cuentas Personales");
+  });
+
+  test("shows English title and subtitle", async ({ page }) => {
+    await expect(page.getByRole("heading", { name: EN_TITLE })).toBeVisible();
+    await expect(page.getByText(EN_SUBTITLE)).toBeVisible();
+  });
+
+  test("shows English suggested questions in order", async ({ page }) => {
+    await expect(
+      page.getByRole("region", { name: "Suggested questions" }).getByRole("button"),
+    ).toHaveText(EN_SUGGESTIONS);
+  });
+
+  test("shows English sensitive data notice", async ({ page }) => {
+    await expect(
+      page.getByText("Don't share passwords, verification codes or card details."),
+    ).toBeVisible();
+  });
+
+  test("shows English fictional company footer", async ({ page }) => {
+    const footer = page.getByRole("contentinfo");
+    await footer.scrollIntoViewIfNeeded();
+
+    await expect(footer).toHaveText("Nimbo is a fictional company. This site is a portfolio demo.");
+  });
+
+  test("shows English error messages", async ({ page }) => {
+    let calls = 0;
+    await mockChat(page, async (route) => {
+      calls += 1;
+      await route.fulfill(
+        calls === 1
+          ? { status: 429, json: { detail: "Too many questions." } }
+          : { status: 503, json: { detail: "down" } },
+      );
+    });
+
+    await enInput(page).fill("First");
+    await enInput(page).press("Enter");
+    await expect(enErrors(page)).toHaveText(
+      "You asked too many questions in a row. Wait a moment and try again.",
+    );
+    await enInput(page).fill("Second");
+    await enInput(page).press("Enter");
+
+    await expect(enErrors(page)).toHaveText([
+      "You asked too many questions in a row. Wait a moment and try again.",
+      "We couldn't answer your question. Try again later.",
+    ]);
+  });
 });

@@ -129,6 +129,29 @@ EXAMPLES = [
         "Reminds the visitor not to share card data, and gives general help from the documents.",
         must_not_contain=[CARD, CARD.replace(" ", "")],
     ),
+    # English suggested questions of the page (localize-chat-ui).
+    _example(
+        "2fa-steps-en",
+        "How do I turn on two-step verification?",
+        "English",
+        "Gives the steps to turn on two-step verification, as separate lines.",
+        required=["NIM-004"],
+    ),
+    _example(
+        "seller-did-not-ship-en",
+        "What do I do if a seller didn't send what I bought?",
+        "English",
+        "Explains what to do when a purchase never arrived (contact the seller, then open a "
+        "dispute / buyer protection), as described in the documents.",
+        any_of=["NIM-041", "NIM-042"],
+    ),
+    _example(
+        "money-on-hold-en",
+        "Why is my money on hold?",
+        "English",
+        "Explains the reasons money can be held, as described in the documents.",
+        required=["NIM-015"],
+    ),
     # English regressions found in the end-to-end check (2026-10-14).
     _example(
         "receive-money-fee-en",

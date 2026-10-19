@@ -6,7 +6,7 @@ export default defineConfig({
   fullyParallel: true,
   // ponytail: capped; one Chromium per CPU starves a Windows laptop and page loads time out.
   workers: 2,
-  use: { baseURL: "http://127.0.0.1:3100" },
+  use: { baseURL: "http://127.0.0.1:3100", locale: "es-AR" },
   projects: [
     { name: "phone", use: { ...devices["Desktop Chrome"], viewport: { width: 375, height: 800 } } },
     { name: "desktop", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } },

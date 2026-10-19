@@ -51,7 +51,7 @@ poetry run uvicorn nimbo.api:create_app --factory --port 8000
 | 429 | `{"detail": str}` + `Retry-After` header | More than 10 requests per IP in 60 s (422s count, 429s do not). |
 | 503 | `{"detail": str}` | OpenAI (chat or embeddings) failed. |
 
-Each question is answered independently (no conversation memory). The answer uses the question's language. Models are set in `backend/app.yaml`. Allowed browser origins come from `CORS_ORIGINS`.
+Each question is answered independently (no conversation memory). The answer uses the question's language. The page language follows the browser's `Accept-Language`: Spanish for `es*` (and `ca`, `gl`, `eu`), otherwise English. Models are set in `backend/app.yaml`. Allowed browser origins come from `CORS_ORIGINS`.
 
 ## Answer-quality evals (LangSmith)
 
