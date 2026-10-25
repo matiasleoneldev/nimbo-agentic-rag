@@ -326,13 +326,29 @@ def test_chat_drops_unretrieved_source_ids(make_client: ClientFactory) -> None:
 
 def test_chat_no_information_returns_empty_sources(make_client: ClientFactory) -> None:
     model = RecordingFakeChatModel(
-        responses=[model_reply("El Centro de Ayuda no tiene esa información.", ["NIM-020"], False)]
+        responses=[model_reply("El Centro de Ayuda no tiene esa información.", ["NIM-020"], "none")]
     )
 
     response = make_client(model).post("/api/chat", json={"question": "¿Capital de Australia?"})
 
     assert response.status_code == 200
     assert response.json()["sources"] == []
+
+
+def test_chat_partial_answer_keeps_sources(make_client: ClientFactory) -> None:
+    model = RecordingFakeChatModel(
+        responses=[
+            model_reply(
+                "Cuesta 1,5% del monto. El Centro de Ayuda no tiene información sobre lo demás.",
+                ["NIM-020"],
+                "partial",
+            )
+        ]
+    )
+
+    body = make_client(model).post("/api/chat", json={"question": FEE_QUESTION}).json()
+
+    assert body["sources"] == [{"id": "NIM-020", "title": FEE_TITLE}]
 
 
 def test_chat_rate_limit_rejects_eleventh_request(make_client: ClientFactory) -> None:

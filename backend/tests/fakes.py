@@ -1,7 +1,7 @@
 """Test doubles for the OpenAI-backed seams (tests never call OpenAI)."""
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.embeddings import DeterministicFakeEmbedding
@@ -88,13 +88,15 @@ class FailingChatModel(FakeListChatModel):
         raise OpenAIError("provider unavailable")
 
 
-def model_reply(answer: str, source_ids: list[str], has_information: bool = True) -> str:
+def model_reply(
+    answer: str, source_ids: list[str], coverage: Literal["full", "partial", "none"] = "full"
+) -> str:
     return json.dumps(
         {
             "question_language": "Spanish",
             "answer": answer,
+            "coverage": coverage,
             "source_ids": source_ids,
-            "has_information": has_information,
         }
     )
 

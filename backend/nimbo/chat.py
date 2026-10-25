@@ -6,7 +6,7 @@ questions and answers under `configurable.thread_id`.
 
 import html
 from dataclasses import dataclass
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 
 from langchain_core.documents import Document
 from langchain_core.language_models import LanguageModelInput
@@ -38,8 +38,9 @@ class ModelAnswer(BaseModel):
     # (the documents are all Spanish, which otherwise pulls answers into Spanish).
     question_language: str
     answer: str
+    # Before source_ids, so the model decides how much the documents cover before it cites any.
+    coverage: Literal["full", "partial", "none"]
     source_ids: list[str]
-    has_information: bool
 
 
 class Source(BaseModel):
@@ -75,9 +76,9 @@ or items.
 - If the information differs by country or by account type and the question does not say which \
 applies, give every applicable variant, each labeled with its country or account type.
 - If the documents cover only part of the question, answer that part and say explicitly which \
-part the help center has no information about.
+part the help center has no information about, and set coverage to partial.
 - If the documents do not contain the information at all, say explicitly that the help center \
-does not have that information and set has_information to false. Do not point the visitor to any \
+does not have that information and set coverage to none. Do not point the visitor to any \
 contact channel that the documents do not mention.
 - You cannot see any visitor's account, payments or balance. If the question is about the \
 visitor's own account, say so and give the general information from the documents.
@@ -86,8 +87,8 @@ fact from the documents in the last message, never from an earlier answer.
 - If the question contains a password, a verification code or a card number, remind the visitor \
 not to share that kind of data, and never repeat the value, nor any such value from earlier \
 messages.
-- source_ids: the ids of the documents your answer is based on (empty if has_information is \
-false). Do not mention document ids or list sources inside the answer text; they are shown \
+- source_ids: the ids of the documents your answer is based on (empty if coverage is \
+none). Do not mention document ids or list sources inside the answer text; they are shown \
 separately.
 
 {_parser.get_format_instructions()}"""
@@ -186,7 +187,7 @@ def generate(state: ConversationState, runtime: Runtime[ChatContext]) -> dict[st
     # Only ids that were actually retrieved, once each, in the model's order.
     ids = (
         list(dict.fromkeys(i for i in parsed.source_ids if i in titles))
-        if parsed.has_information
+        if parsed.coverage != "none"
         else []
     )
     # The model occasionally emits HTML entities ("&iacute;"); the answer must be plain text.

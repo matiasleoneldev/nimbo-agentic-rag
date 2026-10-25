@@ -66,19 +66,17 @@ Runs the real chain (OpenAI, costs credits) over two LangSmith datasets, one exp
 - Code checks: expected sources and no leaked card number.
 - An LLM judge (`gpt-4.1-mini`) checks grounding, language, plain text and the per-example expectation, plus voseo on Spanish examples.
 
-Results on 2026-10-24 (`gpt-4.1-mini`, `text-embedding-3-large`, k = 8):
+Results on 2026-10-25 (`gpt-4.1-mini`, `text-embedding-3-large`, k = 8):
 
 | Metric | `support-chat-answers` | `support-chat-conversations` |
 |---|---|---|
-| sources | 15/16 | 8/8 |
+| sources | 16/16 | 8/8 |
 | no_forbidden_text | 16/16 | 8/8 |
 | grounded | 16/16 | 8/8 |
 | correct_language | 16/16 | 8/8 |
 | plain_text | 16/16 | 8/8 |
 | meets_expectation | 16/16 | 8/8 |
 | voseo (Spanish only) | 10/10 | 8/8 |
-
-Known flaky example: `mixed-partial-question-es` returns empty `sources` about 2 times in 5. When half the question is unanswerable, the model sometimes sets `has_information=false`, which drops all sources. This happened before conversation memory too, and is still open.
 
 How the settings got here:
 
