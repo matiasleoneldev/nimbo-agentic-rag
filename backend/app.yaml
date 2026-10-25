@@ -17,6 +17,12 @@ retrieval:
   k: 8
   table: help_center_documents
 
+conversations:
+  # Most recent exchanges (question + answer) passed to the model.
+  max_exchanges: 6
+  # A conversation expires this long after its most recent answered question.
+  ttl_seconds: 900
+
 # Display labels for the identifiers used in manifest.json.
 # Identifiers are stable and used for filtering; labels are only for display
 # and for prefixing chunk text before embedding.

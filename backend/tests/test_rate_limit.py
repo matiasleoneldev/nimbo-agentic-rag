@@ -1,12 +1,5 @@
 from nimbo.rate_limit import RateLimiter
-
-
-class FakeClock:
-    def __init__(self) -> None:
-        self.now = 1000.0
-
-    def __call__(self) -> float:
-        return self.now
+from tests.fakes import FakeClock
 
 
 def test_rate_limiter_rejects_eleventh_request() -> None:

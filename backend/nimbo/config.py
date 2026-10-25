@@ -21,6 +21,8 @@ class Settings:
     vector_size: int
     retrieval_k: int
     table: str
+    max_exchanges: int
+    conversation_ttl_seconds: int
     # labels[group][identifier] -> display label, e.g. labels["countries"]["AR"] == "Argentina"
     labels: dict[str, dict[str, str]]
 
@@ -37,6 +39,8 @@ def load_settings(config_file: Path = CONFIG_FILE) -> Settings:
         vector_size=int(raw["models"]["vector_size"]),
         retrieval_k=int(raw["retrieval"]["k"]),
         table=raw["retrieval"]["table"],
+        max_exchanges=int(raw["conversations"]["max_exchanges"]),
+        conversation_ttl_seconds=int(raw["conversations"]["ttl_seconds"]),
         labels=raw["labels"],
     )
 

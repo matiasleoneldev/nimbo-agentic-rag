@@ -12,6 +12,16 @@ from openai import OpenAIError
 VECTOR_SIZE = 16
 
 
+class FakeClock:
+    """Injectable clock that tests move forward by hand."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
 class CountingFakeEmbeddings(DeterministicFakeEmbedding):
     """Deterministic fake embeddings that record every text they embed."""
 
@@ -46,6 +56,25 @@ class RecordingFakeChatModel(FakeListChatModel):
         return super()._call(messages, stop, run_manager, **kwargs)
 
 
+FAIL = "<fail>"
+
+
+class FlakyChatModel(RecordingFakeChatModel):
+    """Like RecordingFakeChatModel, but raises the provider error where a response is FAIL."""
+
+    def _call(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> str:
+        reply = super()._call(messages, stop, run_manager, **kwargs)
+        if reply == FAIL:
+            raise OpenAIError("provider unavailable")
+        return reply
+
+
 class FailingChatModel(FakeListChatModel):
     """Simulates the model provider being down."""
 
@@ -68,3 +97,7 @@ def model_reply(answer: str, source_ids: list[str], has_information: bool = True
             "has_information": has_information,
         }
     )
+
+
+def rewrite_reply(search_query: str) -> str:
+    return json.dumps({"search_query": search_query})

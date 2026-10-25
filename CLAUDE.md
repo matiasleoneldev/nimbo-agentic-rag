@@ -10,7 +10,8 @@ RAG chatbot (portfolio demo) answering questions over synthetic support docs (Sp
   - `config.py`: `app.yaml` + env.
   - `pdf_text.py`: pdfplumber, tables as `a | b` rows.
   - `ingest.py`: `python -m nimbo.ingest`.
-  - `chat.py`: retrieve + generate.
+  - `chat.py`: LangGraph graph (rewrite, retrieve, generate), `ask()`.
+  - `conversations.py`: open conversations and their expiry.
   - `rate_limit.py`
   - `api.py`: `uvicorn nimbo.api:create_app --factory`.
 

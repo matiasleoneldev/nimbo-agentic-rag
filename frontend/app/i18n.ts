@@ -13,6 +13,9 @@ export type Dictionary = {
   footer: string;
   rateLimitError: string;
   genericError: string;
+  expiredError: string;
+  expiryWarning: string;
+  expiredNotice: string;
   inputLabel: string;
   conversationLabel: string;
   sourcesLabel: string;
@@ -33,6 +36,11 @@ export const dictionaries: Record<Language, Dictionary> = {
     footer: "Nimbo es una empresa ficticia. Este sitio es una demo con fines de portfolio.",
     rateLimitError: "Hiciste muchas preguntas seguidas. Esperá un momento y volvé a intentarlo.",
     genericError: "No pudimos responder tu pregunta. Intentalo de nuevo más tarde.",
+    expiredError: "La conversación expiró. Volvé a hacer tu pregunta.",
+    expiryWarning:
+      "Tu conversación vence en menos de 5 minutos por inactividad. Hacé una pregunta para continuarla.",
+    expiredNotice:
+      "La conversación expiró por inactividad. Tu próxima pregunta empieza una conversación nueva.",
     inputLabel: "Tu pregunta",
     conversationLabel: "Conversación",
     sourcesLabel: "Fuentes",
@@ -57,6 +65,11 @@ export const dictionaries: Record<Language, Dictionary> = {
     footer: "Nimbo is a fictional company. This site is a portfolio demo.",
     rateLimitError: "You asked too many questions in a row. Wait a moment and try again.",
     genericError: "We couldn't answer your question. Try again later.",
+    expiredError: "The conversation expired. Ask your question again.",
+    expiryWarning:
+      "Your conversation expires in less than 5 minutes due to inactivity. Ask a question to keep it going.",
+    expiredNotice:
+      "The conversation expired due to inactivity. Your next question starts a new conversation.",
     inputLabel: "Your question",
     conversationLabel: "Conversation",
     sourcesLabel: "Sources",

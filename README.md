@@ -42,16 +42,17 @@ cd backend
 poetry run uvicorn nimbo.api:create_app --factory --port 8000
 ```
 
-`POST /api/chat` with `{"question": "..."}` (1-500 characters after trimming, plain text). Public, no authentication.
+`POST /api/chat` with `{"question": "...", "conversation_id": "..."}`. `question` is 1-500 characters after trimming, plain text. `conversation_id` is optional (at most 64 characters): omit it to start a new conversation, or send the one returned by the previous answer to continue it. Public, no authentication.
 
 | Status | Body | When |
 |---|---|---|
-| 200 | `{"answer": str, "sources": [{"id", "title"}]}` | Answered. `sources` is empty when the help center has no information. |
-| 422 | FastAPI validation error | Missing, non-string, blank or >500-character question. |
+| 200 | `{"answer": str, "sources": [{"id", "title"}], "conversation_id": str, "expires_in_seconds": int}` | Answered. `sources` is empty when the help center has no information. |
+| 404 | `{"detail": str}` | `conversation_id` is unknown or expired. Nothing is answered; start a new conversation. |
+| 422 | FastAPI validation error | Missing, non-string, blank or >500-character question; non-string or >64-character `conversation_id`. |
 | 429 | `{"detail": str}` + `Retry-After` header | More than 10 requests per IP in 60 s (422s count, 429s do not). |
 | 503 | `{"detail": str}` | OpenAI (chat or embeddings) failed. |
 
-Each question is answered independently (no conversation memory). The answer uses the question's language. The page language follows the browser's `Accept-Language`: Spanish for `es*` (and `ca`, `gl`, `eu`), otherwise English. Models are set in `backend/app.yaml`. Allowed browser origins come from `CORS_ORIGINS`.
+Conversation memory: follow-up questions are understood from the 6 most recent exchanges of the same conversation (`conversations.max_exchanges` in `backend/app.yaml`); a follow-up is first rewritten into a self-contained question, which is what gets retrieved. A conversation expires 15 minutes after its last answered question (`expires_in_seconds` is 900); the page warns 5 minutes before. Conversations live in the API process memory: they are lost when the page reloads or the API restarts, so **the API must run as a single process** (one worker, one replica). The answer uses the question's language. The page language follows the browser's `Accept-Language`: Spanish for `es*` (and `ca`, `gl`, `eu`), otherwise English. Models are set in `backend/app.yaml`. Allowed browser origins come from `CORS_ORIGINS`.
 
 ## Answer-quality evals (LangSmith)
 
@@ -60,22 +61,24 @@ cd backend
 poetry run python -m evals.run_evals
 ```
 
-Runs the real chain (OpenAI, costs credits) over the LangSmith dataset `support-chat-answers` (13 examples). The dataset is created on the first run, and examples missing by name are added on later runs. It needs an ingested index plus `OPENAI_API_KEY`, `LANGSMITH_API_KEY` and `DATABASE_URL`. Scoring:
+Runs the real chain (OpenAI, costs credits) over two LangSmith datasets, one experiment each: `support-chat-answers` (16 single questions, each in a new conversation) and `support-chat-conversations` (8 examples: earlier turns asked live in one conversation, then the graded follow-up). Datasets are created on the first run, and examples missing by name are added on later runs. It needs an ingested index plus `OPENAI_API_KEY`, `LANGSMITH_API_KEY` and `DATABASE_URL`. Scoring:
 
 - Code checks: expected sources and no leaked card number.
 - An LLM judge (`gpt-4.1-mini`) checks grounding, language, plain text and the per-example expectation, plus voseo on Spanish examples.
 
-Results on 2026-10-14 (`gpt-4.1-mini`, `text-embedding-3-large`, k = 8):
+Results on 2026-10-24 (`gpt-4.1-mini`, `text-embedding-3-large`, k = 8):
 
-| Metric | Score |
-|---|---|
-| sources | 13/13 |
-| no_forbidden_text | 13/13 |
-| grounded | 13/13 |
-| correct_language | 13/13 |
-| plain_text | 13/13 |
-| meets_expectation | 13/13 |
-| voseo (Spanish only) | 10/10 |
+| Metric | `support-chat-answers` | `support-chat-conversations` |
+|---|---|---|
+| sources | 15/16 | 8/8 |
+| no_forbidden_text | 16/16 | 8/8 |
+| grounded | 16/16 | 8/8 |
+| correct_language | 16/16 | 8/8 |
+| plain_text | 16/16 | 8/8 |
+| meets_expectation | 16/16 | 8/8 |
+| voseo (Spanish only) | 10/10 | 8/8 |
+
+Known flaky example: `mixed-partial-question-es` returns empty `sources` about 2 times in 5. When half the question is unanswerable, the model sometimes sets `has_information=false`, which drops all sources. This happened before conversation memory too, and is still open.
 
 How the settings got here:
 

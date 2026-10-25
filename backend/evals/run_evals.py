@@ -1,23 +1,29 @@
 """Answer-quality evals on LangSmith: `python -m evals.run_evals` (run from backend/).
 
 Calls the real OpenAI models (costs credits). Needs OPENAI_API_KEY, LANGSMITH_API_KEY,
-DATABASE_URL and an ingested index. The dataset is created on first run; to change its
-examples, delete the dataset in LangSmith and run again; new examples (by name) are added.
+DATABASE_URL and an ingested index. Runs two datasets, one experiment each: single
+questions, and conversations (earlier turns asked live, then the graded question). Datasets are
+created on first run; to change their examples, delete the dataset in LangSmith and run again;
+new examples (by name) are added.
 """
 
+import uuid
+from collections.abc import Callable
 from typing import Any
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_postgres import PGEngine, PGVectorStore
+from langgraph.checkpoint.memory import InMemorySaver
 from langsmith import Client
 from pydantic import BaseModel, Field
 
 from nimbo.api import get_chat_model, get_embeddings
-from nimbo.chat import answer_question
+from nimbo.chat import ChatContext, ask, build_graph
 from nimbo.config import ENV_FILE, load_settings, require_env
 
 DATASET = "support-chat-answers"
+CONVERSATIONS_DATASET = "support-chat-conversations"
 CARD = "4111 1111 1111 1111"
 
 
@@ -170,6 +176,88 @@ EXAMPLES = [
 ]
 
 
+def _conversation_example(
+    name: str, turns: list[str], question: str, language: str, expectation: str, **kwargs: Any
+) -> dict[str, Any]:
+    example = _example(name, question, language, expectation, **kwargs)
+    example["inputs"]["turns"] = turns
+    return example
+
+
+FEE_QUESTION = "¿Cuánto cuesta un retiro inmediato?"
+CHILE_MINIMUM = "Gives the Chile minimum for instant withdrawals: 500 CLP."
+# Each example is named after the spec scenario it measures (add-conversation-memory).
+CONVERSATION_EXAMPLES = [
+    _conversation_example(
+        "follow-up-country-es",
+        ["¿Cuál es el mínimo por retiro inmediato?"],
+        "¿y en Chile?",
+        "Spanish",
+        CHILE_MINIMUM,
+        required=["NIM-020"],
+    ),
+    _conversation_example(
+        "follow-up-timing-es",
+        [FEE_QUESTION],
+        "¿y cuánto tarda?",
+        "Spanish",
+        "Says how long an instant withdrawal takes (minutes).",
+        required=["NIM-013"],
+    ),
+    _conversation_example(
+        "comparison-standard-withdrawal-es",
+        [FEE_QUESTION],
+        "¿y es más caro que el retiro estándar?",
+        "Spanish",
+        f"Compares both fees: the instant withdrawal costs {FEE} and the standard withdrawal is "
+        "free, so the instant one is more expensive.",
+        required=["NIM-020"],
+    ),
+    _conversation_example(
+        "comparison-business-account-es",
+        [FEE_QUESTION],
+        "¿y para una Cuenta de Negocios?",
+        "Spanish",
+        "Says withdrawals from a Business Account have the same conditions as from a Personal "
+        "Account.",
+        required=["NIM-021"],
+    ),
+    _conversation_example(
+        "language-switch-en-es",
+        ["How much does an instant withdrawal to my bank account cost?"],
+        "¿y en Chile cuál es el mínimo?",
+        "Spanish",
+        CHILE_MINIMUM,
+        required=["NIM-020"],
+    ),
+    _conversation_example(
+        "card-number-earlier-turn-es",
+        [f"Mi tarjeta {CARD} no funciona, ¿qué hago?"],
+        "¿y si sigue sin funcionar?",
+        "Spanish",
+        "Gives general help from the documents for a card that still does not work.",
+        must_not_contain=[CARD, CARD.replace(" ", "")],
+    ),
+    _conversation_example(
+        "topic-change-es",
+        [FEE_QUESTION],
+        "¿Cómo activo la verificación en dos pasos?",
+        "Spanish",
+        "Gives the steps to turn on two-step verification, with nothing about withdrawals.",
+        required=["NIM-004"],
+    ),
+    _conversation_example(
+        "follow-up-out-of-scope-es",
+        [FEE_QUESTION],
+        "¿y cuál es la capital de Australia?",
+        "Spanish",
+        "Says the help center has no information about it, without answering it and without "
+        "pointing to any contact channel.",
+        no_information=True,
+    ),
+]
+
+
 def sources(outputs: dict[str, Any], reference_outputs: dict[str, Any]) -> dict[str, Any]:
     """Deterministic: expected source ids present (or none for no-information)."""
     ids = {s["id"] for s in outputs["sources"]}
@@ -208,7 +296,8 @@ def judge(
     judge_model = ChatOpenAI(model="gpt-4.1-mini").with_structured_output(Verdict)
     verdict = judge_model.invoke(
         "You grade answers of a help-center chatbot for Nimbo, a fictional payments company.\n"
-        f"Question: {inputs['question']}\n"
+        + (f"Earlier questions: {inputs['turns']}\n" if inputs.get("turns") else "")
+        + f"Question: {inputs['question']}\n"
         f"Expected language: {reference_outputs['language']}\n"
         f"Expectation: {reference_outputs['expectation']}\n"
         f"Answer:\n{outputs['answer']}\n"
@@ -225,37 +314,34 @@ def judge(
     }
 
 
-def main() -> None:
-    load_dotenv(ENV_FILE)
-    settings = load_settings()
-    engine = PGEngine.from_connection_string(url=require_env("DATABASE_URL"))
-    store = PGVectorStore.create_sync(
-        engine=engine, table_name=settings.table, embedding_service=get_embeddings(settings)
-    )
-    model = get_chat_model(settings)
-
-    def target(inputs: dict[str, Any]) -> dict[str, Any]:
-        return answer_question(inputs["question"], store, model, settings.retrieval_k).model_dump()
-
-    client = Client()
-    if client.has_dataset(dataset_name=DATASET):
-        dataset = client.read_dataset(dataset_name=DATASET)
+def _run(
+    client: Client,
+    dataset_name: str,
+    description: str,
+    examples: list[dict[str, Any]],
+    target: Callable[[dict[str, Any]], dict[str, Any]],
+    metadata: dict[str, Any],
+    prefix: str,
+) -> None:
+    if client.has_dataset(dataset_name=dataset_name):
+        dataset = client.read_dataset(dataset_name=dataset_name)
     else:
-        dataset = client.create_dataset(DATASET, description="Nimbo support chat answers")
+        dataset = client.create_dataset(dataset_name, description=description)
     existing = {(e.metadata or {}).get("name") for e in client.list_examples(dataset_id=dataset.id)}
-    missing = [e for e in EXAMPLES if e["metadata"]["name"] not in existing]
+    missing = [e for e in examples if e["metadata"]["name"] not in existing]
     if missing:
         client.create_examples(dataset_id=dataset.id, examples=missing)
 
     results = client.evaluate(
         target,
-        data=DATASET,
+        data=dataset_name,
         evaluators=[sources, no_forbidden_text, judge],
-        experiment_prefix=settings.chat_model,
-        metadata={"models": {"chat": settings.chat_model, "embeddings": settings.embedding_model}},
+        experiment_prefix=prefix,
+        metadata=metadata,
     )
 
     # Per-metric pass rate, plus each failure with its example name.
+    print(f"== {dataset_name}")
     scores: dict[str, list[bool]] = {}
     for row in results:
         name = row["example"].metadata.get("name") if row["example"].metadata else "?"
@@ -266,6 +352,50 @@ def main() -> None:
                 print(f"FAIL {result.key}: {name} -- {result.comment or ''}")
     for key, values in scores.items():
         print(f"{key}: {sum(values)}/{len(values)}")
+
+
+def main() -> None:
+    load_dotenv(ENV_FILE)
+    settings = load_settings()
+    engine = PGEngine.from_connection_string(url=require_env("DATABASE_URL"))
+    store = PGVectorStore.create_sync(
+        engine=engine, table_name=settings.table, embedding_service=get_embeddings(settings)
+    )
+    context = ChatContext(
+        get_chat_model(settings), store, settings.retrieval_k, settings.max_exchanges
+    )
+    graph = build_graph(InMemorySaver())
+
+    def answer(inputs: dict[str, Any]) -> dict[str, Any]:
+        # A new conversation per example: each question is answered on its own.
+        return ask(graph, inputs["question"], uuid.uuid4().hex, context).model_dump()
+
+    def converse(inputs: dict[str, Any]) -> dict[str, Any]:
+        conversation_id = uuid.uuid4().hex
+        for turn in inputs["turns"]:
+            ask(graph, turn, conversation_id, context)
+        return ask(graph, inputs["question"], conversation_id, context).model_dump()
+
+    client = Client()
+    metadata = {"models": {"chat": settings.chat_model, "embeddings": settings.embedding_model}}
+    _run(
+        client,
+        DATASET,
+        "Nimbo support chat answers",
+        EXAMPLES,
+        answer,
+        metadata,
+        settings.chat_model,
+    )
+    _run(
+        client,
+        CONVERSATIONS_DATASET,
+        "Nimbo support chat answers to follow-up questions",
+        CONVERSATION_EXAMPLES,
+        converse,
+        metadata,
+        f"{settings.chat_model}-conversations",
+    )
 
 
 if __name__ == "__main__":

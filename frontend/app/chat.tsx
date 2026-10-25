@@ -1,25 +1,40 @@
 "use client";
 
-import { type FormEvent, useState, useSyncExternalStore } from "react";
+import { type FormEvent, useEffect, useState, useSyncExternalStore } from "react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const MAX_QUESTION_LENGTH = 500;
+// The expiry warning shows this long before the conversation expires.
+const WARNING_MS = 5 * 60 * 1000;
 
 import type { Dictionary } from "./i18n";
 
 type Source = { id: string; title: string };
-type ChatResponse = { answer: string; sources: Source[] };
+type ChatResponse = {
+  answer: string;
+  sources: Source[];
+  conversation_id: string;
+  expires_in_seconds: number;
+};
 
 type Entry =
   | { question: string; status: "pending" }
   | { question: string; status: "answered"; answer: string; sources: Source[] }
   | { question: string; status: "error"; message: string };
 
+type Outcome =
+  | { entry: Entry; kind: "answered"; conversationId: string; expiresInSeconds: number }
+  | { entry: Entry; kind: "expired" | "failed" };
+
+type Expiry = { phase: "active" | "warning" | "expired"; at: number };
+
 function isChatResponse(value: unknown): value is ChatResponse {
   if (typeof value !== "object" || value === null) return false;
-  const { answer, sources } = value as Record<string, unknown>;
+  const { answer, sources, conversation_id, expires_in_seconds } = value as Record<string, unknown>;
   return (
     typeof answer === "string" &&
+    typeof conversation_id === "string" &&
+    typeof expires_in_seconds === "number" &&
     Array.isArray(sources) &&
     sources.every(
       (s: unknown) =>
@@ -31,19 +46,35 @@ function isChatResponse(value: unknown): value is ChatResponse {
   );
 }
 
-async function askQuestion(question: string, t: Dictionary): Promise<Entry> {
+async function askQuestion(
+  question: string,
+  conversationId: string | null,
+  t: Dictionary,
+): Promise<Outcome> {
+  const failed = (message: string): Outcome => ({
+    entry: { question, status: "error", message },
+    kind: "failed",
+  });
   try {
     const response = await fetch(`${API_URL}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify(
+        conversationId === null ? { question } : { question, conversation_id: conversationId },
+      ),
     });
-    if (response.status === 429) return { question, status: "error", message: t.rateLimitError };
+    if (response.status === 429) return failed(t.rateLimitError);
+    if (response.status === 404) return { ...failed(t.expiredError), kind: "expired" };
     const body: unknown = response.ok ? await response.json() : null;
-    if (!isChatResponse(body)) return { question, status: "error", message: t.genericError };
-    return { question, status: "answered", answer: body.answer, sources: body.sources };
+    if (!isChatResponse(body)) return failed(t.genericError);
+    return {
+      entry: { question, status: "answered", answer: body.answer, sources: body.sources },
+      kind: "answered",
+      conversationId: body.conversation_id,
+      expiresInSeconds: body.expires_in_seconds,
+    };
   } catch {
-    return { question, status: "error", message: t.genericError };
+    return failed(t.genericError);
   }
 }
 
@@ -55,7 +86,26 @@ export function Chat({ t }: { t: Dictionary }) {
   const hydrated = useSyncExternalStore(subscribeNever, () => true, () => false);
   const [input, setInput] = useState("");
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [expiry, setExpiry] = useState<Expiry | null>(null);
   const pending = entries.some((entry) => entry.status === "pending");
+
+  // Only a new answer (a new `at`) reschedules; a failed question leaves the timers alone.
+  const expiresAt = expiry?.at;
+  useEffect(() => {
+    if (expiresAt === undefined) return;
+    const enter = (phase: Expiry["phase"]) =>
+      setExpiry((current) => (current?.at === expiresAt ? { phase, at: expiresAt } : current));
+    const warning = setTimeout(() => enter("warning"), expiresAt - WARNING_MS - Date.now());
+    const expired = setTimeout(() => {
+      enter("expired");
+      setConversationId(null);
+    }, expiresAt - Date.now());
+    return () => {
+      clearTimeout(warning);
+      clearTimeout(expired);
+    };
+  }, [expiresAt]);
 
   async function send(text: string) {
     const question = text.trim();
@@ -63,8 +113,16 @@ export function Chat({ t }: { t: Dictionary }) {
     setInput("");
     const index = entries.length;
     setEntries((previous) => [...previous, { question, status: "pending" }]);
-    const result = await askQuestion(question, t);
-    setEntries((previous) => previous.map((entry, i) => (i === index ? result : entry)));
+    const outcome = await askQuestion(question, conversationId, t);
+    setEntries((previous) => previous.map((entry, i) => (i === index ? outcome.entry : entry)));
+    if (outcome.kind === "answered") {
+      // Also when the page expired the conversation meanwhile: the API answered it in time.
+      setConversationId(outcome.conversationId);
+      setExpiry({ phase: "active", at: Date.now() + outcome.expiresInSeconds * 1000 });
+    } else if (outcome.kind === "expired") {
+      setConversationId(null);
+      setExpiry(null);
+    }
   }
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -144,6 +202,11 @@ export function Chat({ t }: { t: Dictionary }) {
             </button>
           </div>
           <p className="text-xs text-slate-500">{t.sensitiveNotice}</p>
+          {expiry !== null && expiry.phase !== "active" && (
+            <p role="status" className="text-xs text-amber-700">
+              {expiry.phase === "warning" ? t.expiryWarning : t.expiredNotice}
+            </p>
+          )}
         </form>
 
         {input === "" && (

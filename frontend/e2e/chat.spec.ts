@@ -6,25 +6,27 @@ const SUGGESTIONS = [
   "¿Qué hago si un vendedor no me envió lo que compré?",
   "¿Por qué mi dinero está retenido?",
 ];
+const CONVERSATION = { conversation_id: "conv-1", expires_in_seconds: 900 };
 const FEE_ANSWER = {
   answer: "Cuesta 1,5% del monto.\nCon un mínimo por país.",
   sources: [{ id: "NIM-020", title: "Comisiones para Cuentas Personales" }],
+  ...CONVERSATION,
 };
 
 type Handler = (route: Route) => Promise<void>;
+type SentBody = { question: string; conversation_id?: string };
 
-/** Intercepts POST /api/chat; returns the questions the page sent. */
-async function mockChat(page: Page, handler: Handler): Promise<string[]> {
-  const questions: string[] = [];
+/** Intercepts POST /api/chat; returns the request bodies the page sent. */
+async function mockChat(page: Page, handler: Handler): Promise<SentBody[]> {
+  const sent: SentBody[] = [];
   await page.route("**/api/chat", async (route) => {
-    const body: unknown = route.request().postDataJSON();
-    if (typeof body === "object" && body !== null && "question" in body) {
-      questions.push(String(body.question));
-    }
+    sent.push(route.request().postDataJSON() as SentBody);
     await handler(route);
   });
-  return questions;
+  return sent;
 }
+
+const questionsOf = (sent: SentBody[]) => sent.map((body) => body.question);
 
 const reply =
   (status: number, json: unknown): Handler =>
@@ -59,7 +61,7 @@ test("sends question on Enter", async ({ page }) => {
   await input(page).press("Enter");
 
   await expect(page.getByTestId("answer")).toBeVisible();
-  expect(sent).toEqual(["¿Cuánto cuesta?"]);
+  expect(questionsOf(sent)).toEqual(["¿Cuánto cuesta?"]);
 });
 
 test("does not send blank question", async ({ page }) => {
@@ -70,7 +72,7 @@ test("does not send blank question", async ({ page }) => {
   await page.getByRole("button", { name: "Enviar" }).click();
 
   await page.waitForTimeout(300);
-  expect(sent).toEqual([]);
+  expect(questionsOf(sent)).toEqual([]);
 });
 
 test("caps input at 500 characters", async ({ page }) => {
@@ -113,7 +115,7 @@ test("clicking a suggestion sends it", async ({ page }) => {
   await page.getByRole("button", { name: SUGGESTIONS[3] }).click();
 
   await expect(page.getByRole("list", { name: "Conversación" })).toContainText(SUGGESTIONS[3]);
-  expect(sent).toEqual([SUGGESTIONS[3]]);
+  expect(questionsOf(sent)).toEqual([SUGGESTIONS[3]]);
 });
 
 test("shows answer with sources", async ({ page }) => {
@@ -132,7 +134,7 @@ test("shows answer with sources", async ({ page }) => {
 });
 
 test("renders answer markup as text", async ({ page }) => {
-  await mockChat(page, reply(200, { answer: "<b>hola</b>", sources: [] }));
+  await mockChat(page, reply(200, { answer: "<b>hola</b>", sources: [], ...CONVERSATION }));
 
   await input(page).fill("markup");
   await input(page).press("Enter");
@@ -168,7 +170,7 @@ test("does not send while an answer is pending", async ({ page }) => {
   release();
 
   await expect(page.getByTestId("answer")).toBeVisible();
-  expect(sent).toEqual(["Primera"]);
+  expect(questionsOf(sent)).toEqual(["Primera"]);
 });
 
 test("shows sensitive data notice", async ({ page }) => {
@@ -240,6 +242,183 @@ test("centers content at desktop width", async ({ page }, testInfo) => {
   const box = (await page.getByRole("main").boundingBox())!;
   expect(box.width).toBeLessThan(1440);
   expect(Math.abs(box.x - (1440 - box.x - box.width))).toBeLessThanOrEqual(2);
+});
+
+const WARNING =
+  "Tu conversación vence en menos de 5 minutos por inactividad. Hacé una pregunta para continuarla.";
+const EXPIRED =
+  "La conversación expiró por inactividad. Tu próxima pregunta empieza una conversación nueva.";
+const EN_WARNING =
+  "Your conversation expires in less than 5 minutes due to inactivity. Ask a question to keep it going.";
+const EN_EXPIRED =
+  "The conversation expired due to inactivity. Your next question starts a new conversation.";
+
+/** Installs page.clock, which must happen before the page loads, then reloads the page. */
+async function withFakeClock(page: Page) {
+  await page.clock.install();
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("textbox")).toBeEnabled();
+}
+
+async function ask(page: Page, question: string, answers: number) {
+  await input(page).fill(question);
+  await input(page).press("Enter");
+  await expect(page.getByTestId("answer")).toHaveCount(answers);
+}
+
+test.describe("conversation", () => {
+  test("sends conversation id with follow-up questions", async ({ page }) => {
+    const sent = await mockChat(page, reply(200, FEE_ANSWER));
+
+    await ask(page, "Primera", 1);
+    await ask(page, "Segunda", 2);
+
+    expect(sent).toEqual([
+      { question: "Primera" },
+      { question: "Segunda", conversation_id: "conv-1" },
+    ]);
+  });
+
+  test("starts a new conversation after reload", async ({ page }) => {
+    const sent = await mockChat(page, reply(200, FEE_ANSWER));
+    await ask(page, "Primera", 1);
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(input(page)).toBeEnabled();
+    await expect(page.getByRole("list", { name: "Conversación" })).toHaveCount(0);
+    await ask(page, "Segunda", 1);
+
+    expect(sent[1]).toEqual({ question: "Segunda" });
+  });
+
+  test("shows expiry warning after 10 idle minutes", async ({ page }) => {
+    await withFakeClock(page);
+    await mockChat(page, reply(200, FEE_ANSWER));
+    await ask(page, "Primera", 1);
+
+    await page.clock.fastForward("10:00");
+
+    await expect(page.getByText(WARNING)).toBeVisible();
+  });
+
+  test("does not show expiry warning before 10 minutes", async ({ page }) => {
+    await withFakeClock(page);
+    await mockChat(page, reply(200, FEE_ANSWER));
+    await ask(page, "Primera", 1);
+
+    await page.clock.fastForward("09:00");
+
+    await expect(page.getByText(WARNING)).toHaveCount(0);
+  });
+
+  test("hides expiry warning after a new answer", async ({ page }) => {
+    await withFakeClock(page);
+    await mockChat(page, reply(200, FEE_ANSWER));
+    await ask(page, "Primera", 1);
+    await page.clock.fastForward("10:00");
+    await expect(page.getByText(WARNING)).toBeVisible();
+
+    await ask(page, "Segunda", 2);
+
+    await expect(page.getByText(WARNING)).toHaveCount(0);
+  });
+
+  test("expires conversation after 15 idle minutes", async ({ page }) => {
+    await withFakeClock(page);
+    const sent = await mockChat(page, reply(200, FEE_ANSWER));
+    await ask(page, "Primera", 1);
+
+    await page.clock.fastForward("15:00");
+
+    await expect(page.getByText(EXPIRED)).toBeVisible();
+    await expect(page.getByText(WARNING)).toHaveCount(0);
+    const conversation = page.getByRole("list", { name: "Conversación" });
+    await expect(conversation.getByText("Primera")).toBeVisible();
+    await expect(page.getByTestId("answer")).toHaveText(FEE_ANSWER.answer);
+    await ask(page, "Segunda", 2);
+    expect(sent[1]).toEqual({ question: "Segunda" });
+  });
+
+  test("hides expired notice after the next answer", async ({ page }) => {
+    await withFakeClock(page);
+    await mockChat(page, reply(200, FEE_ANSWER));
+    await ask(page, "Primera", 1);
+    await page.clock.fastForward("15:00");
+    await expect(page.getByText(EXPIRED)).toBeVisible();
+
+    await ask(page, "Segunda", 2);
+
+    await expect(page.getByText(EXPIRED)).toHaveCount(0);
+  });
+
+  test("keeps expired notice after a failed question", async ({ page }) => {
+    await withFakeClock(page);
+    let calls = 0;
+    await mockChat(page, async (route) => {
+      calls += 1;
+      await route.fulfill(
+        calls === 1 ? { status: 200, json: FEE_ANSWER } : { status: 503, json: { detail: "down" } },
+      );
+    });
+    await ask(page, "Primera", 1);
+    await page.clock.fastForward("15:00");
+    await expect(page.getByText(EXPIRED)).toBeVisible();
+
+    await input(page).fill("Segunda");
+    await input(page).press("Enter");
+    await expect(errors(page)).toHaveCount(1);
+
+    await expect(page.getByText(EXPIRED)).toBeVisible();
+  });
+
+  test("keeps the conversation when a pending answer arrives after page expiry", async ({
+    page,
+  }) => {
+    await withFakeClock(page);
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let calls = 0;
+    const sent = await mockChat(page, async (route) => {
+      calls += 1;
+      if (calls === 2) await held;
+      await route.fulfill({ status: 200, json: FEE_ANSWER });
+    });
+    await ask(page, "Primera", 1);
+    await input(page).fill("Segunda");
+    await input(page).press("Enter");
+    await expect(page.getByText("Buscando en el Centro de Ayuda…")).toBeVisible();
+
+    await page.clock.fastForward("15:00");
+    await expect(page.getByText(EXPIRED)).toBeVisible();
+    release();
+    await expect(page.getByTestId("answer")).toHaveCount(2);
+
+    await expect(page.getByText(EXPIRED)).toHaveCount(0);
+    await ask(page, "Tercera", 3);
+    expect(sent[1]).toEqual({ question: "Segunda", conversation_id: "conv-1" });
+    expect(sent[2]).toEqual({ question: "Tercera", conversation_id: "conv-1" });
+  });
+
+  test("shows expired message on 404 and starts a new conversation", async ({ page }) => {
+    let calls = 0;
+    const sent = await mockChat(page, async (route) => {
+      calls += 1;
+      await route.fulfill(
+        calls === 2
+          ? { status: 404, json: { detail: "Conversation not found." } }
+          : { status: 200, json: FEE_ANSWER },
+      );
+    });
+    await ask(page, "Primera", 1);
+
+    await input(page).fill("Segunda");
+    await input(page).press("Enter");
+
+    await expect(errors(page)).toHaveText("La conversación expiró. Volvé a hacer tu pregunta.");
+    await ask(page, "Tercera", 2);
+    expect(sent[1]).toEqual({ question: "Segunda", conversation_id: "conv-1" });
+    expect(sent[2]).toEqual({ question: "Tercera" });
+  });
 });
 
 const EN_SUGGESTIONS = [
@@ -350,7 +529,9 @@ test.describe("English page", () => {
       await route.fulfill(
         calls === 1
           ? { status: 429, json: { detail: "Too many questions." } }
-          : { status: 503, json: { detail: "down" } },
+          : calls === 2
+            ? { status: 503, json: { detail: "down" } }
+            : { status: 404, json: { detail: "Conversation not found." } },
       );
     });
 
@@ -366,5 +547,37 @@ test.describe("English page", () => {
       "You asked too many questions in a row. Wait a moment and try again.",
       "We couldn't answer your question. Try again later.",
     ]);
+    await enInput(page).fill("Third");
+    await enInput(page).press("Enter");
+
+    await expect(enErrors(page)).toHaveText([
+      "You asked too many questions in a row. Wait a moment and try again.",
+      "We couldn't answer your question. Try again later.",
+      "The conversation expired. Ask your question again.",
+    ]);
+  });
+
+  test("shows English expiry warning", async ({ page }) => {
+    await withFakeClock(page);
+    await mockChat(page, reply(200, FEE_ANSWER));
+    await enInput(page).fill("How much?");
+    await enInput(page).press("Enter");
+    await expect(page.getByTestId("answer")).toBeVisible();
+
+    await page.clock.fastForward("10:00");
+
+    await expect(page.getByText(EN_WARNING)).toBeVisible();
+  });
+
+  test("shows English expired notice", async ({ page }) => {
+    await withFakeClock(page);
+    await mockChat(page, reply(200, FEE_ANSWER));
+    await enInput(page).fill("How much?");
+    await enInput(page).press("Enter");
+    await expect(page.getByTestId("answer")).toBeVisible();
+
+    await page.clock.fastForward("15:00");
+
+    await expect(page.getByText(EN_EXPIRED)).toBeVisible();
   });
 });
