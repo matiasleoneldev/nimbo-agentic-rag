@@ -120,6 +120,9 @@ def create_app(
             answer = ask(graph, body.question, conversation_id, context)
         except OpenAIError, OutputParserException:
             logger.exception("Answer generation failed")
+            if body.conversation_id is None:
+                # The client never got this id, and sweep() only sees touched ids.
+                checkpointer.delete_thread(conversation_id)
             return JSONResponse(status_code=503, content={"detail": UNAVAILABLE})
         conversations.touch(conversation_id)
         return ChatResponse(

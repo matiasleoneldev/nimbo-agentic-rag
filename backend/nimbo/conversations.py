@@ -36,6 +36,9 @@ class ConversationRegistry:
         """Forgets expired conversations, checkpoints included."""
         # ponytail: O(open conversations) on every request, fine for a demo's traffic; move to a
         # background timer, or PostgresSaver plus a DELETE job, if traffic grows.
+        # ponytail: a request still running as its conversation expires can have that checkpoint
+        # deleted mid-run by another request's sweep, then touch() reopens it with lost history.
+        # Only within seconds of expiry; skip ids with a request in flight if it ever matters.
         now = self._clock()
         with self._lock:
             expired = [i for i, last in self._last_answered.items() if now - last >= self._ttl]
