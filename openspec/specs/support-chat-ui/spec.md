@@ -33,7 +33,7 @@ The page SHALL offer a single-line text input for the question and a send button
 - **THEN** the input holds only the first 500 characters
 
 ### Requirement: Suggested questions
-While the input is empty, the page SHALL show, below the input and stacked in a single column at every screen width, exactly four suggested questions in the page language, in this order. In Spanish: "¿Cuánto cuesta un retiro inmediato a mi cuenta bancaria?", "¿Cómo activo la verificación en dos pasos?", "¿Qué hago si un vendedor no me envió lo que compré?", "¿Por qué mi dinero está retenido?". In English: "How much does an instant withdrawal to my bank account cost?", "How do I turn on two-step verification?", "What do I do if a seller didn't send what I bought?", "Why is my money on hold?". While the input contains any character, the suggested questions MUST be hidden.
+While the conversation is empty and the input is empty, the page SHALL show, below the input and stacked in a single column at every screen width, exactly four suggested questions in the page language, in this order. In Spanish: "¿Cuánto cuesta un retiro inmediato a mi cuenta bancaria?", "¿Cómo activo la verificación en dos pasos?", "¿Qué hago si un vendedor no me envió lo que compré?", "¿Por qué mi dinero está retenido?". In English: "How much does an instant withdrawal to my bank account cost?", "How do I turn on two-step verification?", "What do I do if a seller didn't send what I bought?", "Why is my money on hold?". While the input contains any character, the suggested questions MUST be hidden. Once a question has been sent, the suggested questions MUST stay hidden until the page is reloaded, whatever the input contains and whether that question was answered, failed or the conversation expired.
 
 #### Scenario: Suggestions shown on empty input
 - **WHEN** the page loads
@@ -48,8 +48,20 @@ While the input is empty, the page SHALL show, below the input and stacked in a 
 - **THEN** the suggested questions are hidden
 
 #### Scenario: Suggestions return when input is cleared
-- **WHEN** the visitor deletes all characters from the input
+- **WHEN** no question has been sent and the visitor deletes all characters from the input
 - **THEN** the suggested questions are visible again
+
+#### Scenario: Suggestions hidden once the conversation has started
+- **WHEN** a question has been answered and the input is empty
+- **THEN** the suggested questions are hidden
+
+#### Scenario: Suggestions hidden after a failed question
+- **WHEN** the only question sent received `503` and the input is empty
+- **THEN** the suggested questions are hidden
+
+#### Scenario: Suggestions return after reload
+- **WHEN** the visitor has an answered question and reloads the page
+- **THEN** the four suggested questions are visible
 
 ### Requirement: Clicking a suggested question asks it
 Clicking a suggested question SHALL put its text in the input and send it as the question, exactly as if the visitor had typed it and pressed send.
@@ -71,7 +83,7 @@ Each sent question and its answer SHALL be shown on the page in the order they w
 
 #### Scenario: Input clears after sending
 - **WHEN** a question is sent
-- **THEN** the input is empty and the suggested questions are visible
+- **THEN** the input is empty and the suggested questions are hidden
 
 #### Scenario: Follow-up continues the conversation
 - **WHEN** the first question is answered with a `conversation_id` and the visitor sends a second question
@@ -104,10 +116,30 @@ The page SHALL show, in its footer, the fictional company notice in the page lan
 - **THEN** the English fictional company notice is visible
 
 ### Requirement: Pending state
-While a question is waiting for its answer, the page SHALL show a loading indicator for it and MUST NOT send another question (send button and suggested questions disabled).
+While a question is waiting for its answer, the page SHALL show, in that question's answer bubble, a loading indicator made of three dots that bounce slightly one after another, and MUST NOT send another question (send button disabled, Enter sends nothing). The indicator MUST be a status that contains the loading text in the page language, visually hidden so that assistive technology announces it: "Buscando en el Centro de Ayuda…" in Spanish, "Searching the Help Center…" in English. When the visitor's system asks for reduced motion, the dots MUST NOT move.
+
+#### Scenario: Three-dot indicator while pending
+- **WHEN** a question is waiting for its answer
+- **THEN** its answer bubble shows three animated dots, and a status with the text "Buscando en el Centro de Ayuda…" is present
+
+#### Scenario: Dots bounce in sequence
+- **WHEN** a question is waiting for its answer
+- **THEN** each dot's bounce is offset in time from the previous dot's, from first to last, so the three dots never move together
+
+#### Scenario: Indicator replaced by the answer
+- **WHEN** the pending question is answered
+- **THEN** the three-dot indicator is gone and the answer is shown in its bubble
+
+#### Scenario: English loading indicator
+- **WHEN** the page is in English and a question is waiting for its answer
+- **THEN** a status with the text "Searching the Help Center…" is present
+
+#### Scenario: Reduced motion
+- **WHEN** the visitor's system asks for reduced motion and a question is waiting for its answer
+- **THEN** the three dots are shown without animation
 
 #### Scenario: No double send
-- **WHEN** an answer is pending and the visitor clicks a suggested question
+- **WHEN** an answer is pending and the visitor presses Enter with a new question or clicks the send button
 - **THEN** no new request is sent
 
 ### Requirement: Error messages
