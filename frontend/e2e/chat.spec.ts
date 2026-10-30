@@ -26,7 +26,21 @@ async function mockChat(page: Page, handler: Handler): Promise<SentBody[]> {
   return sent;
 }
 
+/** Holds every POST /api/chat until `release` is called, then answers with FEE_ANSWER. */
+async function holdChat(page: Page) {
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const sent = await mockChat(page, async (route) => {
+    await held;
+    await route.fulfill({ status: 200, json: FEE_ANSWER });
+  });
+  return { sent, release };
+}
+
 const questionsOf = (sent: SentBody[]) => sent.map((body) => body.question);
+const dots = (page: Page) => page.getByRole("status").getByTestId("typing-dot");
+const animationNames = (page: Page) =>
+  dots(page).evaluateAll((elements) => elements.map((e) => getComputedStyle(e).animationName));
 
 const reply =
   (status: number, json: unknown): Handler =>
@@ -150,23 +164,93 @@ test("clears input after sending", async ({ page }) => {
   await input(page).press("Enter");
 
   await expect(input(page)).toHaveValue("");
+  await expect(suggestions(page)).toHaveCount(0);
+});
+
+test("hides suggestions once the conversation has started", async ({ page }) => {
+  await mockChat(page, reply(200, FEE_ANSWER));
+
+  await input(page).fill("¿Cuánto cuesta?");
+  await input(page).press("Enter");
+
+  await expect(page.getByTestId("answer")).toBeVisible();
+  await expect(input(page)).toHaveValue("");
+  await expect(suggestions(page)).toHaveCount(0);
+});
+
+test("hides suggestions after a failed question", async ({ page }) => {
+  await mockChat(page, reply(503, { detail: "down" }));
+
+  await input(page).fill("¿Cuánto cuesta?");
+  await input(page).press("Enter");
+
+  await expect(errors(page)).toHaveText(
+    "No pudimos responder tu pregunta. Intentalo de nuevo más tarde.",
+  );
+  await expect(suggestions(page)).toHaveCount(0);
+});
+
+test("shows suggestions again after reload", async ({ page }) => {
+  await mockChat(page, reply(200, FEE_ANSWER));
+  await input(page).fill("¿Cuánto cuesta?");
+  await input(page).press("Enter");
+  await expect(page.getByTestId("answer")).toBeVisible();
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(input(page)).toBeEnabled();
+
   await expect(suggestions(page)).toHaveCount(4);
 });
 
+test("shows a three-dot indicator while pending", async ({ page }) => {
+  const { release } = await holdChat(page);
+
+  await input(page).fill("Primera");
+  await input(page).press("Enter");
+
+  await expect(page.getByRole("status")).toHaveText("Buscando en el Centro de Ayuda…");
+  await expect(dots(page)).toHaveCount(3);
+  expect(await animationNames(page)).not.toContain("none");
+  release();
+  await expect(page.getByTestId("answer")).toBeVisible();
+  await expect(page.getByRole("status")).toHaveCount(0);
+});
+
+test("bounces the dots in sequence", async ({ page }) => {
+  const { release } = await holdChat(page);
+
+  await input(page).fill("Primera");
+  await input(page).press("Enter");
+
+  await expect(dots(page)).toHaveCount(3);
+  const delays = await dots(page).evaluateAll((elements) =>
+    elements.map((e) => getComputedStyle(e).animationDelay),
+  );
+  expect(delays).toEqual(["-0.3s", "-0.15s", "0s"]);
+  release();
+});
+
+test("does not animate the indicator with reduced motion", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const { release } = await holdChat(page);
+
+  await input(page).fill("Primera");
+  await input(page).press("Enter");
+
+  await expect(dots(page)).toHaveCount(3);
+  expect(await animationNames(page)).toEqual(["none", "none", "none"]);
+  release();
+});
+
 test("does not send while an answer is pending", async ({ page }) => {
-  let release: () => void = () => {};
-  const held = new Promise<void>((resolve) => (release = resolve));
-  const sent = await mockChat(page, async (route) => {
-    await held;
-    await route.fulfill({ status: 200, json: FEE_ANSWER });
-  });
+  const { sent, release } = await holdChat(page);
 
   await input(page).fill("Primera");
   await input(page).press("Enter");
   await expect(page.getByRole("status")).toBeVisible();
-  await page.getByRole("button", { name: SUGGESTIONS[0] }).click({ force: true });
   await input(page).fill("Segunda");
   await input(page).press("Enter");
+  await page.getByRole("button", { name: "Enviar" }).click({ force: true });
   release();
 
   await expect(page.getByTestId("answer")).toBeVisible();
@@ -496,6 +580,16 @@ test.describe("English page", () => {
     const sources = page.getByRole("list", { name: "Sources" });
     await expect(sources).toContainText("NIM-020");
     await expect(sources).toContainText("Comisiones para Cuentas Personales");
+  });
+
+  test("shows English loading indicator", async ({ page }) => {
+    const { release } = await holdChat(page);
+
+    await enInput(page).fill("How much?");
+    await enInput(page).press("Enter");
+
+    await expect(page.getByRole("status")).toHaveText("Searching the Help Center…");
+    release();
   });
 
   test("shows English title and subtitle", async ({ page }) => {

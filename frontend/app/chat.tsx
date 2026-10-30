@@ -146,10 +146,22 @@ export function Chat({ t }: { t: Dictionary }) {
                 <p className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-sm bg-sky-700 px-4 py-2 break-words text-white">
                   {entry.question}
                 </p>
-                <div className="max-w-[95%] rounded-2xl rounded-bl-sm border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                <div
+                  className={`max-w-[95%] rounded-2xl rounded-bl-sm border border-slate-200 bg-white px-4 py-3 shadow-sm ${entry.status === "pending" ? "w-fit" : ""}`}
+                >
                   {entry.status === "pending" && (
-                    <p role="status" className="animate-pulse text-slate-500">
-                      {t.loading}
+                    <p role="status" className="flex h-6 items-center gap-1">
+                      <span className="sr-only">{t.loading}</span>
+                      {/* Inline: Tailwind's `animate-bounce` shorthand would reset a delay class to 0s. */}
+                      {["-0.3s", "-0.15s", "0s"].map((delay) => (
+                        <span
+                          key={delay}
+                          aria-hidden="true"
+                          data-testid="typing-dot"
+                          style={{ animationDelay: delay }}
+                          className="h-2 w-2 rounded-full bg-slate-400 motion-safe:animate-bounce"
+                        />
+                      ))}
                     </p>
                   )}
                   {entry.status === "error" && (
@@ -209,18 +221,17 @@ export function Chat({ t }: { t: Dictionary }) {
           )}
         </form>
 
-        {input === "" && (
+        {entries.length === 0 && input === "" && (
           <section aria-label={t.suggestionsLabel} className="flex flex-col gap-2">
             {t.suggestions.map((question) => (
               <button
                 key={question}
                 type="button"
-                disabled={pending}
                 onClick={() => {
                   setInput(question);
                   void send(question);
                 }}
-                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-slate-700 shadow-sm hover:border-sky-300 hover:bg-sky-50 hover:text-sky-900 disabled:cursor-not-allowed disabled:opacity-50"
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-slate-700 shadow-sm hover:border-sky-300 hover:bg-sky-50 hover:text-sky-900"
               >
                 {question}
               </button>
