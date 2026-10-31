@@ -19,6 +19,7 @@ type ChatResponse = {
 
 type Entry =
   | { question: string; status: "pending" }
+  | { question: string; status: "streaming"; answer: string }
   | { question: string; status: "answered"; answer: string; sources: Source[] }
   | { question: string; status: "error"; message: string };
 
@@ -46,17 +47,29 @@ function isChatResponse(value: unknown): value is ChatResponse {
   );
 }
 
+/** One server-sent event of POST /api/chat/stream: `event: <name>` and `data: <json>` lines. */
+function parseEvent(block: string): { event: string; data: unknown } {
+  let event = "";
+  let data = "null";
+  for (const line of block.split("\n")) {
+    if (line.startsWith("event: ")) event = line.slice("event: ".length);
+    else if (line.startsWith("data: ")) data = line.slice("data: ".length);
+  }
+  return { event, data: JSON.parse(data) };
+}
+
 async function askQuestion(
   question: string,
   conversationId: string | null,
   t: Dictionary,
+  onText: (answer: string) => void,
 ): Promise<Outcome> {
   const failed = (message: string): Outcome => ({
     entry: { question, status: "error", message },
     kind: "failed",
   });
   try {
-    const response = await fetch(`${API_URL}/api/chat`, {
+    const response = await fetch(`${API_URL}/api/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(
@@ -65,14 +78,37 @@ async function askQuestion(
     });
     if (response.status === 429) return failed(t.rateLimitError);
     if (response.status === 404) return { ...failed(t.expiredError), kind: "expired" };
-    const body: unknown = response.ok ? await response.json() : null;
-    if (!isChatResponse(body)) return failed(t.genericError);
-    return {
-      entry: { question, status: "answered", answer: body.answer, sources: body.sources },
-      kind: "answered",
-      conversationId: body.conversation_id,
-      expiresInSeconds: body.expires_in_seconds,
-    };
+    if (!response.ok || response.body === null) return failed(t.genericError);
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "";
+    let answer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      // Ended without a done event: the question was not answered.
+      if (done) return failed(t.genericError);
+      buffer += value;
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop() ?? "";
+      for (const block of blocks) {
+        const { event, data } = parseEvent(block);
+        if (event === "delta") {
+          const { text } = data as Record<string, unknown>;
+          if (typeof text !== "string") return failed(t.genericError);
+          answer += text;
+          onText(answer);
+        } else if (event === "done") {
+          if (!isChatResponse(data)) return failed(t.genericError);
+          return {
+            entry: { question, status: "answered", answer: data.answer, sources: data.sources },
+            kind: "answered",
+            conversationId: data.conversation_id,
+            expiresInSeconds: data.expires_in_seconds,
+          };
+        } else if (event === "error") {
+          return failed(t.genericError);
+        }
+      }
+    }
   } catch {
     return failed(t.genericError);
   }
@@ -88,7 +124,7 @@ export function Chat({ t }: { t: Dictionary }) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [expiry, setExpiry] = useState<Expiry | null>(null);
-  const pending = entries.some((entry) => entry.status === "pending");
+  const pending = entries.some((entry) => entry.status === "pending" || entry.status === "streaming");
 
   // Only a new answer (a new `at`) reschedules; a failed question leaves the timers alone.
   const expiresAt = expiry?.at;
@@ -113,8 +149,12 @@ export function Chat({ t }: { t: Dictionary }) {
     setInput("");
     const index = entries.length;
     setEntries((previous) => [...previous, { question, status: "pending" }]);
-    const outcome = await askQuestion(question, conversationId, t);
-    setEntries((previous) => previous.map((entry, i) => (i === index ? outcome.entry : entry)));
+    const update = (next: Entry) =>
+      setEntries((previous) => previous.map((entry, i) => (i === index ? next : entry)));
+    const outcome = await askQuestion(question, conversationId, t, (answer) =>
+      update({ question, status: "streaming", answer }),
+    );
+    update(outcome.entry);
     if (outcome.kind === "answered") {
       // Also when the page expired the conversation meanwhile: the API answered it in time.
       setConversationId(outcome.conversationId);
@@ -169,12 +209,16 @@ export function Chat({ t }: { t: Dictionary }) {
                       {entry.message}
                     </p>
                   )}
-                  {entry.status === "answered" && (
+                  {(entry.status === "streaming" || entry.status === "answered") && (
                     <>
-                      <p data-testid="answer" className="whitespace-pre-line break-words">
+                      <p
+                        data-testid={entry.status === "answered" ? "answer" : "partial-answer"}
+                        aria-busy={entry.status === "streaming"}
+                        className="whitespace-pre-line break-words"
+                      >
                         {entry.answer}
                       </p>
-                      {entry.sources.length > 0 && (
+                      {entry.status === "answered" && entry.sources.length > 0 && (
                         <ul className="mt-3 space-y-1 border-t border-slate-100 pt-2 text-sm text-slate-500" aria-label={t.sourcesLabel}>
                           {entry.sources.map((source) => (
                             <li key={source.id}>

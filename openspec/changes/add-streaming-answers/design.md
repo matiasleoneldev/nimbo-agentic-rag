@@ -65,7 +65,7 @@ The pieces both endpoints use become closures inside `create_app`, next to the e
 
 ### 5. Fakes cover the streaming path
 
-`RecordingFakeChatModel`, `FlakyChatModel` and `FailingChatModel` also override `_stream`. They record the messages and raise `OpenAIError` where `_call` does, then delegate to `FakeListChatModel._stream`, which yields one character per chunk. That gives many `delta` events with no extra code. A mid-answer failure uses a fake that yields part of its reply and then raises `OpenAIError`.
+`RecordingFakeChatModel`, `FlakyChatModel` and `FailingChatModel` also override `_stream`. `_stream` gets the reply from `_call`, so it records the messages and raises `OpenAIError` exactly where `_call` does, and then yields one character per chunk. That gives many `delta` events. `FlakyChatModel` also fails in the middle of an answer: a reply with the failure marker after some text streams that text and then raises `OpenAIError`. For the disconnect test, `PausingChatModel` stops at a pause marker until the test resumes it.
 
 ### 6. Page reads the stream with `fetch` and a small SSE parser
 

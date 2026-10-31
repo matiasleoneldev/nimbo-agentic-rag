@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// The backend is never called: every test intercepts POST /api/chat with page.route.
+// The backend is never called: every test intercepts POST /api/chat/stream with page.route.
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,

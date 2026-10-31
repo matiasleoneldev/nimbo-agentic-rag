@@ -5,6 +5,8 @@ questions and answers under `configurable.thread_id`.
 """
 
 import html
+import json
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, TypedDict
 
@@ -12,6 +14,7 @@ from langchain_core.documents import Document
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.messages import (
     AIMessage,
+    AIMessageChunk,
     AnyMessage,
     BaseMessage,
     HumanMessage,
@@ -20,6 +23,7 @@ from langchain_core.messages import (
 )
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.runnables import Runnable
+from langchain_core.utils.json import parse_partial_json
 from langchain_postgres import PGVectorStore
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
@@ -219,3 +223,38 @@ def ask(graph: Graph, question: str, conversation_id: str, context: ChatContext)
         context=context,
     )
     return ChatAnswer.model_validate(result["answer"])
+
+
+def ask_stream(
+    graph: Graph, question: str, conversation_id: str, context: ChatContext
+) -> Iterator[str | ChatAnswer]:
+    """Yields the answer text as `generate` writes it, then the same ChatAnswer `ask` returns.
+
+    The text is the model's raw answer (no html.unescape), so it only ever grows.
+    """
+    buffer, sent = "", ""
+    state: dict[str, Any] = {}
+    payload: Any  # (mode, payload) pairs: messages give (message, metadata), values the state.
+    for mode, payload in graph.stream(
+        {"question": question},
+        {"configurable": {"thread_id": conversation_id}},
+        context=context,
+        stream_mode=["messages", "values"],
+    ):
+        if mode == "values":
+            state = payload
+            continue
+        message, metadata = payload
+        # Skips rewrite's tokens and the messages generate returns for the state.
+        if metadata.get("langgraph_node") != "generate" or not isinstance(message, AIMessageChunk):
+            continue
+        buffer += message.text
+        try:
+            partial = parse_partial_json(buffer)
+        except json.JSONDecodeError:
+            continue  # Nothing parseable yet: the first chunk is empty, or only whitespace.
+        answer = partial.get("answer") if isinstance(partial, dict) else None
+        if isinstance(answer, str) and len(answer) > len(sent) and answer.startswith(sent):
+            yield answer[len(sent) :]
+            sent = answer
+    yield ChatAnswer.model_validate(state["answer"])

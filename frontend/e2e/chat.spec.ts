@@ -1,3 +1,6 @@
+import { createServer, type Server, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
+
 import { expect, type Page, type Route, test } from "@playwright/test";
 
 const SUGGESTIONS = [
@@ -7,7 +10,13 @@ const SUGGESTIONS = [
   "¿Por qué mi dinero está retenido?",
 ];
 const CONVERSATION = { conversation_id: "conv-1", expires_in_seconds: 900 };
-const FEE_ANSWER = {
+type Answer = {
+  answer: string;
+  sources: { id: string; title: string }[];
+  conversation_id: string;
+  expires_in_seconds: number;
+};
+const FEE_ANSWER: Answer = {
   answer: "Cuesta 1,5% del monto.\nCon un mínimo por país.",
   sources: [{ id: "NIM-020", title: "Comisiones para Cuentas Personales" }],
   ...CONVERSATION,
@@ -16,23 +25,33 @@ const FEE_ANSWER = {
 type Handler = (route: Route) => Promise<void>;
 type SentBody = { question: string; conversation_id?: string };
 
-/** Intercepts POST /api/chat; returns the request bodies the page sent. */
+const serverSentEvent = (event: string, data: unknown) =>
+  `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+
+/** A whole streamed answer: one delta with the full text, then done. */
+const streamed = (answer: Answer) => ({
+  status: 200,
+  contentType: "text/event-stream",
+  body: serverSentEvent("delta", { text: answer.answer }) + serverSentEvent("done", answer),
+});
+
+/** Intercepts POST /api/chat/stream; returns the request bodies the page sent. */
 async function mockChat(page: Page, handler: Handler): Promise<SentBody[]> {
   const sent: SentBody[] = [];
-  await page.route("**/api/chat", async (route) => {
+  await page.route("**/api/chat/stream", async (route) => {
     sent.push(route.request().postDataJSON() as SentBody);
     await handler(route);
   });
   return sent;
 }
 
-/** Holds every POST /api/chat until `release` is called, then answers with FEE_ANSWER. */
+/** Holds every POST /api/chat/stream until `release` is called, then answers with FEE_ANSWER. */
 async function holdChat(page: Page) {
   let release: () => void = () => {};
   const held = new Promise<void>((resolve) => (release = resolve));
   const sent = await mockChat(page, async (route) => {
     await held;
-    await route.fulfill({ status: 200, json: FEE_ANSWER });
+    await route.fulfill(streamed(FEE_ANSWER));
   });
   return { sent, release };
 }
@@ -42,10 +61,55 @@ const dots = (page: Page) => page.getByRole("status").getByTestId("typing-dot");
 const animationNames = (page: Page) =>
   dots(page).evaluateAll((elements) => elements.map((e) => getComputedStyle(e).animationName));
 
+const answer =
+  (body: Answer): Handler =>
+  (route) =>
+    route.fulfill(streamed(body));
+
 const reply =
   (status: number, json: unknown): Handler =>
   (route) =>
     route.fulfill({ status, json });
+
+const servers: Server[] = [];
+test.afterEach(() => {
+  for (const server of servers.splice(0)) {
+    server.closeAllConnections();
+    server.close();
+  }
+});
+
+/**
+ * Answers POST /api/chat/stream from a local server, so the test sends each event when it
+ * chooses (route.fulfill sends a whole body at once).
+ */
+async function streamChat(page: Page) {
+  let opened: (response: ServerResponse) => void = () => {};
+  const response = new Promise<ServerResponse>((resolve) => (opened = resolve));
+  const server = createServer((request, res) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    if (request.method === "OPTIONS") {
+      res.end();
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    res.flushHeaders();
+    opened(res);
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  const sent = await mockChat(page, (route) =>
+    route.continue({ url: `http://127.0.0.1:${port}/api/chat/stream` }),
+  );
+  return {
+    sent,
+    send: async (event: string, data: unknown) =>
+      void (await response).write(serverSentEvent(event, data)),
+    end: async () => void (await response).end(),
+  };
+}
 
 const input = (page: Page) => page.getByRole("textbox", { name: "Tu pregunta" });
 // Scoped: Next.js renders its own role="alert" route announcer.
@@ -69,7 +133,7 @@ test("shows title and subtitle", async ({ page }) => {
 });
 
 test("sends question on Enter", async ({ page }) => {
-  const sent = await mockChat(page, reply(200, FEE_ANSWER));
+  const sent = await mockChat(page, answer(FEE_ANSWER));
 
   await input(page).fill("¿Cuánto cuesta?");
   await input(page).press("Enter");
@@ -79,7 +143,7 @@ test("sends question on Enter", async ({ page }) => {
 });
 
 test("does not send blank question", async ({ page }) => {
-  const sent = await mockChat(page, reply(200, FEE_ANSWER));
+  const sent = await mockChat(page, answer(FEE_ANSWER));
 
   await input(page).fill("   ");
   await input(page).press("Enter");
@@ -124,7 +188,7 @@ test("shows suggestions again when input is cleared", async ({ page }) => {
 });
 
 test("clicking a suggestion sends it", async ({ page }) => {
-  const sent = await mockChat(page, reply(200, FEE_ANSWER));
+  const sent = await mockChat(page, answer(FEE_ANSWER));
 
   await page.getByRole("button", { name: SUGGESTIONS[3] }).click();
 
@@ -133,7 +197,7 @@ test("clicking a suggestion sends it", async ({ page }) => {
 });
 
 test("shows answer with sources", async ({ page }) => {
-  await mockChat(page, reply(200, FEE_ANSWER));
+  await mockChat(page, answer(FEE_ANSWER));
 
   await input(page).fill("¿Cuánto cuesta?");
   await input(page).press("Enter");
@@ -148,7 +212,7 @@ test("shows answer with sources", async ({ page }) => {
 });
 
 test("renders answer markup as text", async ({ page }) => {
-  await mockChat(page, reply(200, { answer: "<b>hola</b>", sources: [], ...CONVERSATION }));
+  await mockChat(page, answer({ answer: "<b>hola</b>", sources: [], ...CONVERSATION }));
 
   await input(page).fill("markup");
   await input(page).press("Enter");
@@ -158,7 +222,7 @@ test("renders answer markup as text", async ({ page }) => {
 });
 
 test("clears input after sending", async ({ page }) => {
-  await mockChat(page, reply(200, FEE_ANSWER));
+  await mockChat(page, answer(FEE_ANSWER));
 
   await input(page).fill("¿Cuánto cuesta?");
   await input(page).press("Enter");
@@ -168,7 +232,7 @@ test("clears input after sending", async ({ page }) => {
 });
 
 test("hides suggestions once the conversation has started", async ({ page }) => {
-  await mockChat(page, reply(200, FEE_ANSWER));
+  await mockChat(page, answer(FEE_ANSWER));
 
   await input(page).fill("¿Cuánto cuesta?");
   await input(page).press("Enter");
@@ -191,7 +255,7 @@ test("hides suggestions after a failed question", async ({ page }) => {
 });
 
 test("shows suggestions again after reload", async ({ page }) => {
-  await mockChat(page, reply(200, FEE_ANSWER));
+  await mockChat(page, answer(FEE_ANSWER));
   await input(page).fill("¿Cuánto cuesta?");
   await input(page).press("Enter");
   await expect(page.getByTestId("answer")).toBeVisible();
@@ -255,6 +319,101 @@ test("does not send while an answer is pending", async ({ page }) => {
 
   await expect(page.getByTestId("answer")).toBeVisible();
   expect(questionsOf(sent)).toEqual(["Primera"]);
+});
+
+test.describe("streamed answer", () => {
+  const GENERIC_ERROR = "No pudimos responder tu pregunta. Intentalo de nuevo más tarde.";
+  const partial = (page: Page) => page.getByTestId("partial-answer");
+
+  async function askStreamed(page: Page) {
+    const stream = await streamChat(page);
+    await input(page).fill("¿Cuánto cuesta?");
+    await input(page).press("Enter");
+    return stream;
+  }
+
+  test("shows answer text while it streams", async ({ page }) => {
+    const stream = await askStreamed(page);
+
+    await stream.send("delta", { text: "Te cobramos" });
+
+    await expect(partial(page)).toHaveText("Te cobramos");
+    await expect(page.getByRole("list", { name: "Fuentes" })).toHaveCount(0);
+    await stream.send("delta", { text: " 1,5%." });
+    await expect(partial(page)).toHaveText("Te cobramos 1,5%.");
+  });
+
+  test("replaces streamed text with the final answer", async ({ page }) => {
+    const stream = await askStreamed(page);
+
+    await stream.send("delta", { text: "Te cobramos 1,5&#37;." });
+    await expect(partial(page)).toHaveText("Te cobramos 1,5&#37;.");
+    await stream.send("done", { ...FEE_ANSWER, answer: "Te cobramos 1,5%." });
+
+    await expect(page.getByTestId("answer")).toHaveText("Te cobramos 1,5%.");
+    await expect(page.getByRole("list", { name: "Fuentes" })).toContainText("NIM-020");
+  });
+
+  test("replaces the indicator with the first answer text", async ({ page }) => {
+    const stream = await askStreamed(page);
+    await expect(dots(page)).toHaveCount(3);
+
+    await stream.send("delta", { text: "Te cobramos" });
+
+    await expect(partial(page)).toHaveText("Te cobramos");
+    await expect(page.getByTestId("typing-dot")).toHaveCount(0);
+    await expect(page.getByRole("status")).toHaveCount(0);
+  });
+
+  test("marks the partial answer busy until done", async ({ page }) => {
+    const stream = await askStreamed(page);
+
+    await stream.send("delta", { text: "Te cobramos" });
+    await expect(partial(page)).toHaveAttribute("aria-busy", "true");
+    await stream.send("done", FEE_ANSWER);
+
+    await expect(page.getByTestId("answer")).toHaveAttribute("aria-busy", "false");
+  });
+
+  test("does not send while the answer is being written", async ({ page }) => {
+    const stream = await askStreamed(page);
+    await stream.send("delta", { text: "Te cobramos" });
+    await expect(partial(page)).toBeVisible();
+
+    await input(page).fill("Segunda");
+    await input(page).press("Enter");
+    await page.getByRole("button", { name: "Enviar" }).click({ force: true });
+
+    await expect(page.getByRole("button", { name: "Enviar" })).toBeDisabled();
+    await page.waitForTimeout(300);
+    expect(questionsOf(stream.sent)).toEqual(["¿Cuánto cuesta?"]);
+  });
+
+  test("shows generic error after a partial answer", async ({ page }) => {
+    const stream = await askStreamed(page);
+    await stream.send("delta", { text: "Te cobramos" });
+    await expect(partial(page)).toBeVisible();
+
+    await stream.send("error", { detail: "unavailable" });
+
+    await expect(errors(page)).toHaveText(GENERIC_ERROR);
+    await expect(partial(page)).toHaveCount(0);
+    await expect(page.getByText("Te cobramos")).toHaveCount(0);
+    await input(page).fill("Segunda");
+    await expect(page.getByRole("button", { name: "Enviar" })).toBeEnabled();
+  });
+
+  test("shows generic error when the stream ends without an answer", async ({ page }) => {
+    const stream = await askStreamed(page);
+    await stream.send("delta", { text: "Te cobramos" });
+    await expect(partial(page)).toBeVisible();
+
+    await stream.end();
+
+    await expect(errors(page)).toHaveText(GENERIC_ERROR);
+    await expect(partial(page)).toHaveCount(0);
+    await expect(page.getByText("Te cobramos")).toHaveCount(0);
+  });
 });
 
 test("shows sensitive data notice", async ({ page }) => {
@@ -352,7 +511,7 @@ async function ask(page: Page, question: string, answers: number) {
 
 test.describe("conversation", () => {
   test("sends conversation id with follow-up questions", async ({ page }) => {
-    const sent = await mockChat(page, reply(200, FEE_ANSWER));
+    const sent = await mockChat(page, answer(FEE_ANSWER));
 
     await ask(page, "Primera", 1);
     await ask(page, "Segunda", 2);
@@ -364,7 +523,7 @@ test.describe("conversation", () => {
   });
 
   test("starts a new conversation after reload", async ({ page }) => {
-    const sent = await mockChat(page, reply(200, FEE_ANSWER));
+    const sent = await mockChat(page, answer(FEE_ANSWER));
     await ask(page, "Primera", 1);
 
     await page.reload({ waitUntil: "domcontentloaded" });
@@ -377,7 +536,7 @@ test.describe("conversation", () => {
 
   test("shows expiry warning after 10 idle minutes", async ({ page }) => {
     await withFakeClock(page);
-    await mockChat(page, reply(200, FEE_ANSWER));
+    await mockChat(page, answer(FEE_ANSWER));
     await ask(page, "Primera", 1);
 
     await page.clock.fastForward("10:00");
@@ -387,7 +546,7 @@ test.describe("conversation", () => {
 
   test("does not show expiry warning before 10 minutes", async ({ page }) => {
     await withFakeClock(page);
-    await mockChat(page, reply(200, FEE_ANSWER));
+    await mockChat(page, answer(FEE_ANSWER));
     await ask(page, "Primera", 1);
 
     await page.clock.fastForward("09:00");
@@ -397,7 +556,7 @@ test.describe("conversation", () => {
 
   test("hides expiry warning after a new answer", async ({ page }) => {
     await withFakeClock(page);
-    await mockChat(page, reply(200, FEE_ANSWER));
+    await mockChat(page, answer(FEE_ANSWER));
     await ask(page, "Primera", 1);
     await page.clock.fastForward("10:00");
     await expect(page.getByText(WARNING)).toBeVisible();
@@ -409,7 +568,7 @@ test.describe("conversation", () => {
 
   test("expires conversation after 15 idle minutes", async ({ page }) => {
     await withFakeClock(page);
-    const sent = await mockChat(page, reply(200, FEE_ANSWER));
+    const sent = await mockChat(page, answer(FEE_ANSWER));
     await ask(page, "Primera", 1);
 
     await page.clock.fastForward("15:00");
@@ -425,7 +584,7 @@ test.describe("conversation", () => {
 
   test("hides expired notice after the next answer", async ({ page }) => {
     await withFakeClock(page);
-    await mockChat(page, reply(200, FEE_ANSWER));
+    await mockChat(page, answer(FEE_ANSWER));
     await ask(page, "Primera", 1);
     await page.clock.fastForward("15:00");
     await expect(page.getByText(EXPIRED)).toBeVisible();
@@ -441,7 +600,7 @@ test.describe("conversation", () => {
     await mockChat(page, async (route) => {
       calls += 1;
       await route.fulfill(
-        calls === 1 ? { status: 200, json: FEE_ANSWER } : { status: 503, json: { detail: "down" } },
+        calls === 1 ? streamed(FEE_ANSWER) : { status: 503, json: { detail: "down" } },
       );
     });
     await ask(page, "Primera", 1);
@@ -465,7 +624,7 @@ test.describe("conversation", () => {
     const sent = await mockChat(page, async (route) => {
       calls += 1;
       if (calls === 2) await held;
-      await route.fulfill({ status: 200, json: FEE_ANSWER });
+      await route.fulfill(streamed(FEE_ANSWER));
     });
     await ask(page, "Primera", 1);
     await input(page).fill("Segunda");
@@ -490,7 +649,7 @@ test.describe("conversation", () => {
       await route.fulfill(
         calls === 2
           ? { status: 404, json: { detail: "Conversation not found." } }
-          : { status: 200, json: FEE_ANSWER },
+          : streamed(FEE_ANSWER),
       );
     });
     await ask(page, "Primera", 1);
@@ -572,7 +731,7 @@ test.describe("English page", () => {
   test.use({ locale: "en-US" });
 
   test("keeps source titles as returned in English page", async ({ page }) => {
-    await mockChat(page, reply(200, FEE_ANSWER));
+    await mockChat(page, answer(FEE_ANSWER));
 
     await enInput(page).fill("How much?");
     await enInput(page).press("Enter");
@@ -653,7 +812,7 @@ test.describe("English page", () => {
 
   test("shows English expiry warning", async ({ page }) => {
     await withFakeClock(page);
-    await mockChat(page, reply(200, FEE_ANSWER));
+    await mockChat(page, answer(FEE_ANSWER));
     await enInput(page).fill("How much?");
     await enInput(page).press("Enter");
     await expect(page.getByTestId("answer")).toBeVisible();
@@ -665,7 +824,7 @@ test.describe("English page", () => {
 
   test("shows English expired notice", async ({ page }) => {
     await withFakeClock(page);
-    await mockChat(page, reply(200, FEE_ANSWER));
+    await mockChat(page, answer(FEE_ANSWER));
     await enInput(page).fill("How much?");
     await enInput(page).press("Enter");
     await expect(page.getByTestId("answer")).toBeVisible();

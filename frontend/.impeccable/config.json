@@ -11,6 +11,15 @@
         ],
         "createdAt": "2026-10-30T14:20:43.443Z",
         "reason": "user confirmed: chose Tailwind animate-bounce for the three-dot pending indicator (2026-10-30)"
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "app/chat.tsx"
+        ],
+        "createdAt": "2026-10-31T20:29:28.472Z",
+        "reason": "Claude triage: flagged line is text-slate-700 on bg-white suggestion buttons (white, not a colored background); pre-existing, untouched by add-streaming-answers"
       }
     ]
   }

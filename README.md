@@ -49,8 +49,22 @@ poetry run uvicorn nimbo.api:create_app --factory --port 8000
 | 200 | `{"answer": str, "sources": [{"id", "title"}], "conversation_id": str, "expires_in_seconds": int}` | Answered. `sources` is empty when the help center has no information. |
 | 404 | `{"detail": str}` | `conversation_id` is unknown or expired. Nothing is answered; start a new conversation. |
 | 422 | FastAPI validation error | Missing, non-string, blank or >500-character question; non-string or >64-character `conversation_id`. |
-| 429 | `{"detail": str}` + `Retry-After` header | More than 10 requests per IP in 60 s (422s count, 429s do not). |
+| 429 | `{"detail": str}` + `Retry-After` header | More than 10 requests per IP in 60 s, counting both endpoints together (422s count, 429s do not). |
 | 503 | `{"detail": str}` | OpenAI (chat or embeddings) failed. |
+
+`POST /api/chat/stream` takes the same body and answers with the same `404`, `422` and `429` responses, before any event is sent. Otherwise it responds `200` with `text/event-stream` and sends the answer while it is written (it never responds `503`). The page uses this endpoint. The evals call `ask()` directly.
+
+| Event | Data | When |
+|---|---|---|
+| `delta` | `{"text": str}` | More answer text. Joined in order, the texts are the answer so far. |
+| `done` | The `200` body of `POST /api/chat` | Last event of an answered question. Its `answer` is authoritative and may differ slightly from the joined deltas (HTML entities). |
+| `error` | `{"detail": str}` | Last event when OpenAI failed, even after some deltas. The question is not answered. |
+
+A stream that ends without `done` (an error or a client disconnect) leaves the question out of the conversation and does not extend it.
+
+```powershell
+curl.exe -N -X POST http://localhost:8000/api/chat/stream -H "Content-Type: application/json" -d '{\"question\": \"¿Cuánto cuesta un retiro inmediato?\"}'
+```
 
 Conversation memory: follow-up questions are understood from the 6 most recent exchanges of the same conversation (`conversations.max_exchanges` in `backend/app.yaml`); a follow-up is first rewritten into a self-contained question, which is what gets retrieved. A conversation expires 15 minutes after its last answered question (`expires_in_seconds` is 900); the page warns 5 minutes before. Conversations live in the API process memory: they are lost when the page reloads or the API restarts, so **the API must run as a single process** (one worker, one replica). The answer uses the question's language. The page language follows the browser's `Accept-Language`: Spanish for `es*` (and `ca`, `gl`, `eu`), otherwise English. Models are set in `backend/app.yaml`. Allowed browser origins come from `CORS_ORIGINS`.
 
@@ -110,5 +124,5 @@ Quality gate:
 cd frontend
 npm run lint
 npm run typecheck
-npm run test:e2e                 # builds, serves on 127.0.0.1:3100, intercepts /api/chat (no backend needed)
+npm run test:e2e                 # builds, serves on 127.0.0.1:3100, intercepts /api/chat/stream (no backend needed)
 ```

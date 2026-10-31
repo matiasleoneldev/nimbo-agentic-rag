@@ -1,13 +1,17 @@
 """Test doubles for the OpenAI-backed seams (tests never call OpenAI)."""
 
 import json
+import threading
+from collections.abc import Iterator
 from typing import Any, Literal
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.embeddings import DeterministicFakeEmbedding
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import AIMessageChunk, BaseMessage
+from langchain_core.outputs import ChatGenerationChunk
 from openai import OpenAIError
+from pydantic import ConfigDict, Field
 
 VECTOR_SIZE = 16
 
@@ -55,12 +59,32 @@ class RecordingFakeChatModel(FakeListChatModel):
         self.received.append(messages)
         return super()._call(messages, stop, run_manager, **kwargs)
 
+    def _stream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        # LangChain calls _stream instead of _call while the graph is streamed; one char per chunk.
+        reply = self._call(messages, stop, run_manager, **kwargs)
+        for i, char in enumerate(reply):
+            yield ChatGenerationChunk(
+                message=AIMessageChunk(
+                    content=char, chunk_position="last" if i == len(reply) - 1 else None
+                )
+            )
+
 
 FAIL = "<fail>"
 
 
 class FlakyChatModel(RecordingFakeChatModel):
-    """Like RecordingFakeChatModel, but raises the provider error where a response is FAIL."""
+    """Like RecordingFakeChatModel, but raises the provider error where a response contains FAIL.
+
+    When streamed, it first sends the text before FAIL, so `"<partial reply>" + FAIL` fails in
+    the middle of an answer.
+    """
 
     def _call(
         self,
@@ -70,12 +94,57 @@ class FlakyChatModel(RecordingFakeChatModel):
         **kwargs: Any,
     ) -> str:
         reply = super()._call(messages, stop, run_manager, **kwargs)
-        if reply == FAIL:
+        if FAIL in reply:
             raise OpenAIError("provider unavailable")
         return reply
 
+    def _stream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        reply = RecordingFakeChatModel._call(self, messages, stop, run_manager, **kwargs)
+        head, failed, _ = reply.partition(FAIL)
+        for char in head:
+            yield ChatGenerationChunk(message=AIMessageChunk(content=char))
+        if failed:
+            raise OpenAIError("provider unavailable")
 
-class FailingChatModel(FakeListChatModel):
+
+PAUSE = "<pause>"
+
+
+class PausingChatModel(RecordingFakeChatModel):
+    """When streamed, stops at PAUSE in a response until `resume` is set, then sends the rest.
+
+    `finished` is set once a paused response has been sent to the end.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    resume: threading.Event = Field(default_factory=threading.Event)
+    finished: threading.Event = Field(default_factory=threading.Event)
+
+    def _stream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        head, paused, tail = self._call(messages, stop, run_manager, **kwargs).partition(PAUSE)
+        for char in head:
+            yield ChatGenerationChunk(message=AIMessageChunk(content=char))
+        if paused:
+            self.resume.wait(timeout=10)
+        for char in tail:
+            yield ChatGenerationChunk(message=AIMessageChunk(content=char))
+        if paused:
+            self.finished.set()
+
+
+class FailingChatModel(RecordingFakeChatModel):
     """Simulates the model provider being down."""
 
     def _call(
