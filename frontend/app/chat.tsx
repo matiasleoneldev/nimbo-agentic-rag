@@ -92,9 +92,11 @@ async function askQuestion(
       for (const block of blocks) {
         const { event, data } = parseEvent(block);
         if (event === "delta") {
-          const { text } = data as Record<string, unknown>;
-          if (typeof text !== "string") return failed(t.genericError);
-          answer += text;
+          if (typeof data !== "object" || data === null || !("text" in data)) {
+            return failed(t.genericError);
+          }
+          if (typeof data.text !== "string") return failed(t.genericError);
+          answer += data.text;
           onText(answer);
         } else if (event === "done") {
           if (!isChatResponse(data)) return failed(t.genericError);
