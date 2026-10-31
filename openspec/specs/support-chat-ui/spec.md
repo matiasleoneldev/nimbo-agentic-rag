@@ -71,11 +71,19 @@ Clicking a suggested question SHALL put its text in the input and send it as the
 - **THEN** a request with that question is sent and the question appears in the conversation
 
 ### Requirement: Conversation display
-Each sent question and its answer SHALL be shown on the page in the order they were asked, as plain text with line breaks preserved. Under each answer that has sources, the page MUST show each source's id and title as plain text, not as links. After a question is sent, the input MUST be cleared. Each question after the first MUST be sent with the `conversation_id` of the most recent answered question, unless the conversation has expired. Reloading the page MUST start with an empty conversation, and its first question MUST be sent without a conversation id.
+Each sent question and its answer SHALL be shown on the page in the order they were asked, as plain text with line breaks preserved. The page MUST send questions to `POST /api/chat/stream` and show the answer text while it arrives; when the `done` event arrives, the answer shown MUST become the `done` event's `answer`, and the question is answered. Under each answer that has sources, the page MUST show each source's id and title as plain text, not as links. After a question is sent, the input MUST be cleared. Each question after the first MUST be sent with the `conversation_id` of the most recent answered question, unless the conversation has expired. Reloading the page MUST start with an empty conversation, and its first question MUST be sent without a conversation id.
 
 #### Scenario: Answer with sources
 - **WHEN** the API answers with sources NIM-020
 - **THEN** the answer text is shown under its question, followed by "NIM-020" and its title, with no link
+
+#### Scenario: Answer appears while it is written
+- **WHEN** the API has sent the `delta` text "Te cobramos" and not yet the `done` event
+- **THEN** "Te cobramos" is shown in the question's answer bubble, with no sources yet
+
+#### Scenario: Done answer replaces the streamed text
+- **WHEN** the `delta` texts read "Te cobramos 1,5&#37;." and the `done` event's `answer` is "Te cobramos 1,5%."
+- **THEN** the answer bubble shows "Te cobramos 1,5%."
 
 #### Scenario: Answer markup is not rendered
 - **WHEN** an answer contains the text `<b>hola</b>`
@@ -116,7 +124,7 @@ The page SHALL show, in its footer, the fictional company notice in the page lan
 - **THEN** the English fictional company notice is visible
 
 ### Requirement: Pending state
-While a question is waiting for its answer, the page SHALL show, in that question's answer bubble, a loading indicator made of three dots that bounce slightly one after another, and MUST NOT send another question (send button disabled, Enter sends nothing). The indicator MUST be a status that contains the loading text in the page language, visually hidden so that assistive technology announces it: "Buscando en el Centro de Ayuda…" in Spanish, "Searching the Help Center…" in English. When the visitor's system asks for reduced motion, the dots MUST NOT move.
+While a question is waiting for its first answer text, the page SHALL show, in that question's answer bubble, a loading indicator made of three dots that bounce slightly one after another. Until the question is answered or fails, the page MUST NOT send another question (send button disabled, Enter sends nothing), and the partial answer MUST be marked busy for assistive technology. The indicator MUST be a status that contains the loading text in the page language, visually hidden so that assistive technology announces it: "Buscando en el Centro de Ayuda…" in Spanish, "Searching the Help Center…" in English. When the visitor's system asks for reduced motion, the dots MUST NOT move.
 
 #### Scenario: Three-dot indicator while pending
 - **WHEN** a question is waiting for its answer
@@ -127,8 +135,12 @@ While a question is waiting for its answer, the page SHALL show, in that questio
 - **THEN** each dot's bounce is offset in time from the previous dot's, from first to last, so the three dots never move together
 
 #### Scenario: Indicator replaced by the answer
-- **WHEN** the pending question is answered
-- **THEN** the three-dot indicator is gone and the answer is shown in its bubble
+- **WHEN** the first answer text of the pending question arrives
+- **THEN** the three-dot indicator is gone and the answer text is shown in its bubble
+
+#### Scenario: Partial answer is busy
+- **WHEN** part of the answer is shown and the `done` event has not arrived
+- **THEN** the answer is marked busy for assistive technology, and it is no longer marked busy once the `done` event arrives
 
 #### Scenario: English loading indicator
 - **WHEN** the page is in English and a question is waiting for its answer
@@ -142,8 +154,12 @@ While a question is waiting for its answer, the page SHALL show, in that questio
 - **WHEN** an answer is pending and the visitor presses Enter with a new question or clicks the send button
 - **THEN** no new request is sent
 
+#### Scenario: No send while the answer is being written
+- **WHEN** part of the answer is shown, the `done` event has not arrived, and the visitor presses Enter with a new question
+- **THEN** no new request is sent
+
 ### Requirement: Error messages
-When the API rejects a question or fails, the page SHALL show an error message in the page language in place of the answer and keep the page usable. A `429` response MUST show "Hiciste muchas preguntas seguidas. Esperá un momento y volvé a intentarlo." in Spanish and "You asked too many questions in a row. Wait a moment and try again." in English. A `404` response MUST show "La conversación expiró. Volvé a hacer tu pregunta." in Spanish and "The conversation expired. Ask your question again." in English, and the next question MUST be sent without a conversation id. Any other failure (including network errors) MUST show "No pudimos responder tu pregunta. Intentalo de nuevo más tarde." in Spanish and "We couldn't answer your question. Try again later." in English.
+When the API rejects a question or fails, the page SHALL show an error message in the page language in place of the answer, including any answer text already shown, and keep the page usable. A `429` response MUST show "Hiciste muchas preguntas seguidas. Esperá un momento y volvé a intentarlo." in Spanish and "You asked too many questions in a row. Wait a moment and try again." in English. A `404` response MUST show "La conversación expiró. Volvé a hacer tu pregunta." in Spanish and "The conversation expired. Ask your question again." in English, and the next question MUST be sent without a conversation id. Any other failure (including network errors, an `error` event, and a stream that ends without a `done` event) MUST show "No pudimos responder tu pregunta. Intentalo de nuevo más tarde." in Spanish and "We couldn't answer your question. Try again later." in English.
 
 #### Scenario: Rate limited
 - **WHEN** the API responds `429`
@@ -152,6 +168,14 @@ When the API rejects a question or fails, the page SHALL show an error message i
 #### Scenario: Server error
 - **WHEN** the API responds `503` or the request fails
 - **THEN** the generic error message is shown
+
+#### Scenario: Error after part of the answer
+- **WHEN** the API has sent `delta` text and then ends the stream with an `error` event
+- **THEN** the partial answer text is gone, the generic error message is shown in its place, and the visitor can send a new question
+
+#### Scenario: Stream ends without an answer
+- **WHEN** the API has sent `delta` text and the stream ends without a `done` or `error` event
+- **THEN** the partial answer text is gone and the generic error message is shown in its place
 
 #### Scenario: Conversation not found
 - **WHEN** the API responds `404` to a question sent with a `conversation_id`
@@ -255,5 +279,5 @@ The expired notice SHALL stay visible until the next question is answered, and M
 When a question sent with a `conversation_id` is still waiting for its answer as the conversation expires on the page, and the API then answers it, the page SHALL show the answer and continue the conversation with that answer's `conversation_id`, as for any answered question.
 
 #### Scenario: Pending answer arrives after page expiry
-- **WHEN** a question sent with a `conversation_id` is pending as the conversation expires on the page, and the API then answers it with `200`
+- **WHEN** a question sent with a `conversation_id` is pending as the conversation expires on the page, and the API then answers it with a `done` event
 - **THEN** the answer is shown, the expired notice is hidden, and the next question is sent with the `conversation_id` of that answer
