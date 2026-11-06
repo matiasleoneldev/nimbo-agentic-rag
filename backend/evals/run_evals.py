@@ -173,6 +173,31 @@ EXAMPLES = [
         "Says the balance must be zero first (withdraw or spend it) before closing the account.",
         required=["NIM-005"],
     ),
+    # Compound questions that need two documents (agentic-rag, 2026-11-06).
+    _example(
+        "fee-and-timing-instant-withdrawal-es",
+        "¿Cuánto cuesta un retiro inmediato y cuánto tarda?",
+        "Spanish",
+        f"Gives the NIM-020 instant withdrawal fee ({FEE}) and the instant withdrawal timing "
+        "from NIM-013 (minutes).",
+        required=["NIM-020", "NIM-013"],
+    ),
+    _example(
+        "2fa-and-account-recovery-es",
+        "¿Cómo activo la verificación en dos pasos y qué hago si no puedo ingresar a mi cuenta?",
+        "Spanish",
+        "Gives the steps to turn on two-step verification and explains how to recover access to "
+        "the account, both as described in the documents.",
+        required=["NIM-004", "NIM-003"],
+    ),
+    _example(
+        "card-request-and-declined-payment-es",
+        "¿Cómo pido la Tarjeta Nimbo y qué hago si me rechazan un pago?",
+        "Spanish",
+        "Explains how to request the Nimbo card and the general reasons a payment can be "
+        "declined with what to do, both as described in the documents.",
+        required=["NIM-060", "NIM-032"],
+    ),
 ]
 
 
@@ -338,6 +363,8 @@ def _run(
         evaluators=[sources, no_forbidden_text, judge],
         experiment_prefix=prefix,
         metadata=metadata,
+        # Answers vary between runs; 3 repetitions keep pipeline vs agent differences above noise.
+        num_repetitions=3,
     )
 
     # Per-metric pass rate, plus each failure with its example name.
@@ -378,6 +405,7 @@ def main() -> None:
 
     client = Client()
     metadata = {"models": {"chat": settings.chat_model, "embeddings": settings.embedding_model}}
+    prefix = f"pipeline-{settings.chat_model}-k{settings.retrieval_k}"
     _run(
         client,
         DATASET,
@@ -385,7 +413,7 @@ def main() -> None:
         EXAMPLES,
         answer,
         metadata,
-        settings.chat_model,
+        prefix,
     )
     _run(
         client,
@@ -394,7 +422,7 @@ def main() -> None:
         CONVERSATION_EXAMPLES,
         converse,
         metadata,
-        f"{settings.chat_model}-conversations",
+        f"{prefix}-conversations",
     )
 
 
