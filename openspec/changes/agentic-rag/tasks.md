@@ -18,6 +18,13 @@ Unless a task says otherwise, verify the backend tasks with `poetry run ruff for
   - (d) when streamed, the final JSON arrives in several content chunks, and the tool-call turn arrives as `tool_call_chunks`.
 
   If (b) or (c) fails, stop and revise design.md before group 4.
+- [x] 1.4 In `run_evals.py`, add 3 "hard" examples, each covering three topics far apart in the corpus (proposal.md, harder questions):
+  - `send-abroad-limit-dispute-es`: international send fee, monthly limit, and opening a dispute. Required NIM-020, NIM-022 and NIM-041.
+  - `close-account-dispute-hold-es`: closing an account with an open dispute and held money, and when that money is released. Required NIM-005 and NIM-015.
+  - `verify-2fa-card-es`: verifying identity, turning on two-step verification, and requesting the card. Required NIM-002, NIM-004 and NIM-060.
+
+  Check each expectation against the PDF text (`nimbo.pdf_text`) before writing it. Verify with ruff and mypy.
+- [x] 1.5 **Manual**: re-run the baseline with the hard examples, still on the unchanged pipeline. Update `## Baseline` in design.md with the new experiment names and per-metric results, and say whether one `k=8` search covered the hard examples. Verify that the new experiments appear in LangSmith with 3 repetitions.
 
 ## 2. Configuration
 
@@ -81,6 +88,10 @@ Each scenario below traces to the named test in `backend/tests/test_chat_api.py`
 
   Verify with ruff and mypy.
 - [ ] 6.2 **Manual**: run the evals with `k=4, max_searches=3`, then with 1–2 more configurations (for example `k=8, max_searches=3` and `k=4, max_searches=2`). Add a `## Results` table to design.md comparing each configuration with the baseline: pass rate per metric, `searched` rate, mean `search_count`, p50 latency and mean tokens (from LangSmith's comparison view). Set `app.yaml` to the chosen configuration and state why it was chosen.
+- [ ] 6.3 Apply the acceptance rule (design.md, decision 10):
+  - If `searched` < 100%, force `tool_choice="required"` on the first turn, add `test_chat_first_turn_must_search`, and re-run 6.2.
+  - If no configuration matches the baseline on every metric, iterate the prompt and re-run, at most twice.
+  - Record the outcome (accepted configuration, or the change stopped before archive) in design.md under `## Results`.
 
 ## 7. Docs and roadmap
 

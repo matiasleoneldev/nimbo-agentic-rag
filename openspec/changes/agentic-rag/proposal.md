@@ -17,6 +17,11 @@ The chat answers through a fixed pipeline (rewrite, retrieve, generate). Every q
 - The streamed `delta` events carry only the final answer text, never a search request or its query. (Decided 2026-11-06.)
 - `openspec/config.yaml` roadmap: the chatbot is now an agent with tools, and today its only tool is the help-center search. Every new tool (account lookups, case actions) still needs its own proposal. (Decided 2026-11-06.)
 - Evals: before any code change, a baseline experiment of the current pipeline runs on the same datasets the agent will use, which gain compound questions that need more than one document. Both run with 3 repetitions. They are compared on correctness, sources, latency, tokens, and searches per question. (Decided 2026-11-06.)
+- The datasets also gain harder questions that one search is unlikely to cover: three topics far apart in the corpus. They are added while the code is still the pipeline, and the baseline is re-run with them. (Decided 2026-11-06, after the first baseline passed every compound question with `k=8`.)
+- Acceptance (Decided 2026-11-06):
+  - The final configuration is the one with the fewest tokens per question among those where no metric falls below the baseline.
+  - `searched` must be 100% across all repetitions. If it is not, the first turn is forced to search (`tool_choice="required"`).
+  - If no configuration matches the baseline, the prompt is revised and the evals re-run, at most twice. If it still does not match, the change is not merged. A latency loss is accepted and reported; a correctness loss is not.
 - Out of scope (Decided 2026-11-06):
   - Any tool other than the search.
   - Showing searches as progress events in the stream or in the page.

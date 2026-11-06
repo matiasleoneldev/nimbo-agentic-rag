@@ -198,6 +198,38 @@ EXAMPLES = [
         "declined with what to do, both as described in the documents.",
         required=["NIM-060", "NIM-032"],
     ),
+    # Hard questions: three topics far apart in the corpus (agentic-rag, 2026-11-06).
+    _example(
+        "send-abroad-limit-dispute-es",
+        "¿Cuánto me cobran por enviar dinero a otro país, cuánto puedo enviar por mes y cómo abro "
+        "una disputa si tengo un problema con una compra?",
+        "Spanish",
+        "Gives the international send fee (2,5% of the amount, plus a 3,5% currency conversion "
+        "margin), says the monthly sending limit depends on the verification level and the "
+        "country (giving values from NIM-022), and explains how to open a dispute (Actividad, the "
+        "payment, Informar un problema, within 180 days of the payment).",
+        required=["NIM-020", "NIM-022", "NIM-041"],
+    ),
+    _example(
+        "close-account-dispute-hold-es",
+        "Quiero cerrar mi cuenta, pero tengo dinero retenido de una venta que tiene una disputa "
+        "abierta. ¿Puedo cerrarla ya y cuándo se libera ese dinero?",
+        "Spanish",
+        "Says the account cannot be closed while it has an open dispute or held money, and that "
+        "money from a payment with an open dispute stays held until the dispute is resolved.",
+        required=["NIM-005", "NIM-015"],
+    ),
+    _example(
+        "verify-2fa-card-es",
+        "¿Cómo verifico mi identidad, cómo activo la verificación en dos pasos y cómo consigo la "
+        "Tarjeta Nimbo?",
+        "Spanish",
+        "Explains how to verify identity (Perfil > Verificación; Level 2 needs the ID document "
+        "and a selfie), the steps to turn on two-step verification (Perfil > Seguridad), and "
+        "that the Nimbo card needs Level 2 verification, with a virtual card at once and the "
+        "physical one in 5 to 10 business days.",
+        required=["NIM-002", "NIM-004", "NIM-060"],
+    ),
 ]
 
 

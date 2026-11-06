@@ -128,6 +128,13 @@ Tests keep going through the HTTP API. Embedding calls stay observable through `
 
 Latency and tokens come from LangSmith's experiment comparison view (traced runs), so no code is needed for them.
 
+### 10. Acceptance rule for the sweep
+
+The decision rules are in proposal.md (Acceptance). How they are applied:
+- "No metric below the baseline" compares the pass rate of each metric on both datasets. The baseline is 100% on every metric, so any failed run is a regression.
+- When `searched` is below 100%, the fix is `tool_choice="required"` on the first `agent` call only (`len(searches) == 0`), and the sweep is re-run. Later turns stay free, so the agent still decides whether to search again. That changes decision 4's binding, and it needs one more test (`test_chat_first_turn_must_search`, which checks the first bind's `tool_choice`).
+- A prompt iteration changes only `SYSTEM_PROMPT` and the `SearchHelpCenter` docstring, and each iteration is recorded in the Results table. After two iterations without a match, the outcome is recorded in design.md and the change stops before archive.
+
 ## Risks / Trade-offs
 
 - [Latency: at least 2 model calls per question, which is 1 more than today's first question, and searches run one at a time because parallel calls are off] → It is measured against the baseline and reported as the cost of the gain. Turning parallel calls back on is a later option, with non-strict tools.
@@ -150,14 +157,20 @@ No data migration. The index is reused, because `k` only changes the query. Open
 
 ## Baseline
 
-Task 1.2, 2026-11-06. The unchanged pipeline (`k=8`, one search per question), with 3 repetitions. Latency and tokens come from the LangSmith experiment stats of the target runs, without the judge.
+Tasks 1.2 and 1.5, 2026-11-06. The unchanged pipeline (`k=8`, one search per question), with 3 repetitions. Latency and tokens come from the LangSmith experiment stats of the target runs, without the judge. The 1.5 run is the baseline that every agent experiment is compared against.
 
 | Experiment | Runs | All metrics | p50 latency | p99 latency | Tokens / run | Cost |
 |---|---|---|---|---|---|---|
-| `pipeline-gpt-4.1-mini-k8-aacad7da` (support-chat-answers, 19 examples) | 57 | 100% (voseo 39/39) | 3.3 s | 5.9 s | ~4,975 (4,767 prompt) | $0.079 |
-| `pipeline-gpt-4.1-mini-k8-conversations-d46acec8` (support-chat-conversations, 8 examples) | 24 | 100% | 5.9 s | 8.1 s | ~10,690 (earlier turns included) | $0.082 |
+| 1.2 `pipeline-gpt-4.1-mini-k8-aacad7da` (answers, 19 examples) | 57 | 100% | 3.3 s | 5.9 s | ~4,975 | $0.079 |
+| 1.2 `pipeline-gpt-4.1-mini-k8-conversations-d46acec8` (conversations, 8 examples) | 24 | 100% | 5.9 s | 8.1 s | ~10,690 | $0.082 |
+| **1.5 `pipeline-gpt-4.1-mini-k8-cc251f72`** (answers, 22 examples incl. 3 hard) | 66 | 100% (voseo 48/48) | 2.9 s | 5.4 s | ~5,020 (4,787 prompt) | $0.094 |
+| **1.5 `pipeline-gpt-4.1-mini-k8-conversations-3dd6b789`** (conversations, 8 examples) | 24 | 100% | 5.5 s | 6.0 s | ~10,640 (earlier turns included) | $0.080 |
 
-Finding: the pipeline passes the 3 new compound examples in every repetition, because `k=8` puts both documents in one search's results. On these datasets the agent can at best tie on correctness. Its case is cost (fewer documents per prompt with `k=4`) against more model calls and latency. Questions that one `k=8` search cannot cover would test a correctness gain. Whether to add them is decided before task 6.2.
+Findings:
+- The pipeline passes every compound and hard example in every repetition. One `k=8` search covers even the three-topic questions.
+- The reason is the corpus size. With 25 documents, `k=8` puts a third of the corpus into every prompt, so retrieval almost cannot miss. On this corpus the agent can at best tie on correctness.
+- The agent's case is therefore cost: fewer documents per prompt with `k=4`, against more model calls and more latency. The sweep (task 6.2) measures exactly that, and the acceptance rule (decision 10) still requires no regression on correctness.
+- A larger corpus would let retrieval precision matter. That is out of scope here, but it is the honest condition under which the agent's correctness advantage would show.
 
 ## Spike findings
 
