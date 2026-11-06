@@ -20,6 +20,7 @@ class Settings:
     embedding_model: str
     vector_size: int
     retrieval_k: int
+    max_searches: int
     table: str
     max_exchanges: int
     conversation_ttl_seconds: int
@@ -38,6 +39,7 @@ def load_settings(config_file: Path = CONFIG_FILE) -> Settings:
         embedding_model=raw["models"]["embeddings"],
         vector_size=int(raw["models"]["vector_size"]),
         retrieval_k=int(raw["retrieval"]["k"]),
+        max_searches=int(raw["retrieval"]["max_searches"]),
         table=raw["retrieval"]["table"],
         max_exchanges=int(raw["conversations"]["max_exchanges"]),
         conversation_ttl_seconds=int(raw["conversations"]["ttl_seconds"]),

@@ -84,7 +84,7 @@ The system prompt keeps every current rule, rewritten from "the documents in the
 - For any question about Nimbo (products, fees, limits, policies), call `search_help_center` before answering.
 - Before answering, check every part of the question against the results. For each part they do not state explicitly, search again with a query for that part. Never infer a missing fact from wording (spike finding c0).
 - Search queries must be self-contained: resolve references to earlier messages.
-- Questions outside the help center (greetings, general knowledge) may be answered without a search, with coverage `none`.
+- Never answer from the model's own knowledge, even general knowledge unrelated to Nimbo: for anything the search results do not contain, say that the help center does not have that information. This line replaced "questions outside the help center may be answered without a search" in prompt iteration 1 (see Results), and the first turn always searches (decision 10).
 
 The question goes as a plain `HumanMessage` wrapped in `<question>` tags.
 
@@ -100,6 +100,7 @@ A tool-call turn has no `answer` field to extract, so nothing reaches the visito
 
 In `tests/fakes.py`:
 - `search_call(query)` returns a marker string, for example `json.dumps({"search": query})` under a reserved key. `RecordingFakeChatModel` turns it into `AIMessage(content="", tool_calls=[...])` from `_generate`, and into one `AIMessageChunk` with `tool_call_chunks` from `_stream`.
+- `search_call` takes one or more queries (`search_call(*queries)`), all asked in one turn. Two in one reply is how the search-limit test asks for a 4th search before the limit bind, so the beyond-limit `ToolMessage` path runs (implementation note, 2026-11-06).
 - `bind_tools(tools, **kwargs)` records `kwargs` in `self.bound` and returns `self`, so tests can assert `tool_choice="none"`.
 - `FlakyChatModel`, `PausingChatModel` and `FailingChatModel` keep their behavior on string replies.
 - `rewrite_reply` is removed.
@@ -134,6 +135,7 @@ The decision rules are in proposal.md (Acceptance). How they are applied:
 - "No metric below the baseline" compares the pass rate of each metric on both datasets. The baseline is 100% on every metric, so any failed run is a regression.
 - When `searched` is below 100%, the fix is `tool_choice="required"` on the first `agent` call only (`len(searches) == 0`), and the sweep is re-run. Later turns stay free, so the agent still decides whether to search again. That changes decision 4's binding, and it needs one more test (`test_chat_first_turn_must_search`, which checks the first bind's `tool_choice`).
 - A prompt iteration changes only `SYSTEM_PROMPT` and the `SearchHelpCenter` docstring, and each iteration is recorded in the Results table. After two iterations without a match, the outcome is recorded in design.md and the change stops before archive.
+- Revised 2026-11-06 (proposal.md, Acceptance revision): after two iterations without a match, the iteration 1 configuration is accepted with its measured loss as the floor for the next change. `grounded`, `no_forbidden_text` and `searched` are the metrics that may never fall below 100%.
 
 ## Risks / Trade-offs
 
@@ -182,3 +184,42 @@ Task 1.3, 2026-11-06. `gpt-4.1-mini` with `langchain-openai` 1.6.7, bound as in 
 - (c0) Finding. For "¿Cuánto cuesta un retiro inmediato y cuánto tarda?", with tools allowed and only the fee document retrieved, the model did not search again. It answered "El tiempo que tarda es inmediato" with coverage `full`, a fact inferred from the word "inmediato". This led to the "check every part" prompt rule and the risk entry above.
 - (d) Pass. When streamed, the tool-call turn gives 0 content chunks and 12 `tool_call_chunks`. The final answer arrives as 74 content chunks of JSON text, so the `parse_partial_json` extraction keeps working and `delta` events stay progressive.
 - Minor: Pydantic emits a `PydanticSerializationUnexpectedValue` warning when it serializes a reply whose `additional_kwargs["parsed"]` holds the `ModelAnswer`. It is only a warning, but if it floods the logs, drop `parsed` from the reply before it is traced or stored. The final reply is never stored in the state (decision 2).
+
+## Results
+
+Tasks 6.2 and 6.3, 2026-11-06. `gpt-4.1-mini`, `text-embedding-3-large`, 3 repetitions. The baseline is the 1.5 pipeline run, at 100% on every metric. Latency and tokens come from the root target runs (the judge is not included), as in the Baseline section. Pass rates are summed over the 3 repetitions. A total of 67 or 65 instead of 66 means that one judge call failed in that run.
+
+| Run | Change from the previous row | Answers: sources / grounded / language / meets / no_forbidden | searched | search_count | p50 | Tokens / run | Conversations (all metrics) | p50 | Tokens / run |
+|---|---|---|---|---|---|---|---|---|---|
+| Baseline `pipeline-…-k8-cc251f72` / `-conversations-3dd6b789` | n/a | 66 / 66 / 66 / 66 / 66 of 66 | n/a | 1 | 2.9 s | ~5,020 | 100% | 5.5 s | ~10,640 |
+| it0 `agentic-…-k4-s3-bac492c0` / `-conversations-18a5edd3` | Agent as designed | 56 / 64 / 66 / 56 / 66 | 60/63 | 1.11 | 3.5 s | ~4,716 | sources 21/24, searched 20/21, grounded 23/24, meets 22/24 | 5.9 s | ~7,200 |
+| it1 `agentic-…-k4-s3-831488e0` / `-conversations-d08d6daa` | `tool_choice="required"` on the first turn (the `searched` rule), plus prompt iteration 1 | 62 / 66 / 65 / 63 / 66 | 63/63 | 1.15 | 3.5 s | ~4,955 | sources 22/24, others 100% | 6.2 s | ~8,377 |
+| it1 `agentic-…-k8-s3-7c73acc4` / `-conversations-78bba3aa` | Same code, `k=8` | 60 / 66 / 65 / 64 / 65 | 63/63 | 1.05 | 3.7 s | ~6,482 | 100% | 6.4 s | ~12,345 |
+| it2 `agentic-…-k4-s3-7328e227` / `-conversations-7e086d0f` | Prompt iteration 2 | 58/67 / 65/65 / 61/65 / 57/65 / 65 | 63/63 | 1.21 | 3.8 s | ~5,464 | 100% | 6.7 s | ~8,823 |
+
+Prompt iterations (each changes only `SYSTEM_PROMPT` and the `SearchHelpCenter` docstring):
+- Iteration 1:
+  - Out-of-scope questions: the line "may be answered without a search" made the model answer "Canberra". It became "never answer from your own knowledge".
+  - A new rule: search again when the results describe an exact value (an amount, a minimum, a time) only in general terms.
+- Iteration 2:
+  - "Count the topics and search once per topic."
+  - Never put sensitive values in a search query.
+  - `question_language` is never the language of the queries or of the documents.
+  - Reverted, because it made the answers worse.
+
+Diagnosis (from the `searches` outputs in LangSmith):
+- The failing examples are the multi-topic ones (`verify-2fa-card-es`, `fee-and-timing-instant-withdrawal-es`, `card-request-and-declined-payment-es`, `send-abroad-limit-dispute-es`) and the minimums (`withdrawal-minimum-*`).
+- The agent writes one narrow query about the first topic, for example "cómo verifico mi identidad", and stops. The baseline embedded the whole question, and with `k=8` on 25 documents that covers every topic.
+- `k=8` did not fix it (60/66 sources), so the loss comes from the query, not from `k`.
+- The language failures (`money-on-hold-en`, `2fa-steps-en`) follow Spanish queries.
+- Asking for one search per topic (iteration 2) raised `search_count` only to 1.21, and the extra rules hurt language and minimums.
+
+Outcome (decision 10):
+- No configuration matches the baseline on every metric after two prompt iterations. Under the original rule the change would stop before archive.
+- The author accepted the measured loss instead (proposal.md, Acceptance revision, 2026-11-06), so the change is **accepted with iteration 1, `k=4, max_searches=3`**:
+  - It has the best answers-dataset results among the agent runs.
+  - It costs about the same tokens as the baseline on single questions (~4,955 vs ~5,020) and ~21% fewer on conversations (~8,377 vs ~10,640).
+  - p50 latency is about 0.6 s higher.
+  - `grounded`, `no_forbidden_text` and `searched` are at 100% on both datasets.
+- The code keeps the forced first search and the iteration 1 prompt.
+- The floor for the next change is iteration 1's pass rates. That change tries a stronger chat model first, then a question-splitting step. A larger corpus, where one `k=8` search no longer covers the question, stays an option for showing the agent's advantage.

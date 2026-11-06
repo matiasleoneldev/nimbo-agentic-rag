@@ -1,9 +1,10 @@
+import dataclasses
 import json
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 import pytest
@@ -17,6 +18,7 @@ from nimbo.api import create_app, get_chat_model, get_embeddings
 from nimbo.chat import ChatModel
 from nimbo.config import Settings
 from nimbo.ingest import ingest
+from tests.conftest import indexed_documents
 from tests.fakes import (
     FAIL,
     PAUSE,
@@ -27,14 +29,17 @@ from tests.fakes import (
     PausingChatModel,
     RecordingFakeChatModel,
     model_reply,
-    rewrite_reply,
+    search_call,
 )
 
 FEE_QUESTION = "¿Cuánto cuesta un retiro inmediato?"
 FEE_TITLE = "Comisiones para Cuentas Personales"
 MINUTE = 60.0
+UNAVAILABLE = "The assistant is temporarily unavailable. Please try again later."
 
-ClientFactory = Callable[[ChatModel], TestClient]
+
+class ClientFactory(Protocol):
+    def __call__(self, model: ChatModel, **settings: Any) -> TestClient: ...
 
 
 @pytest.fixture
@@ -55,8 +60,10 @@ def make_client(
     ingest(settings, embeddings, engine)
     embeddings.embedded_texts.clear()
 
-    def factory(model: ChatModel) -> TestClient:
-        app = create_app(settings=settings, engine=engine, clock=clock)
+    def factory(model: ChatModel, **overrides: Any) -> TestClient:
+        app = create_app(
+            settings=dataclasses.replace(settings, **overrides), engine=engine, clock=clock
+        )
         app.dependency_overrides[get_chat_model] = lambda: model
         app.dependency_overrides[get_embeddings] = lambda: embeddings
         return TestClient(app)
@@ -65,15 +72,17 @@ def make_client(
 
 
 def fee_model() -> RecordingFakeChatModel:
-    """Answers questions that each start a conversation (one model call per question)."""
-    return RecordingFakeChatModel(responses=[model_reply("Cuesta 1,5% del monto.", ["NIM-020"])])
+    """Answers questions that each start a conversation: one search, then the answer."""
+    return RecordingFakeChatModel(
+        responses=[search_call(FEE_QUESTION), model_reply("Cuesta 1,5% del monto.", ["NIM-020"])]
+    )
 
 
 def conversation_model(exchanges: int) -> RecordingFakeChatModel:
-    """Answers a first question, then follow-ups: rewrite, then generate, for each."""
-    responses = [model_reply("Respuesta 1.", ["NIM-020"])]
+    """Answers a first question, then follow-ups: one search, then the answer, for each."""
+    responses = [search_call("Pregunta autónoma 1"), model_reply("Respuesta 1.", ["NIM-020"])]
     for n in range(2, exchanges + 1):
-        responses += [rewrite_reply(f"Pregunta autónoma {n}"), model_reply(f"Respuesta {n}.", [])]
+        responses += [search_call(f"Pregunta autónoma {n}"), model_reply(f"Respuesta {n}.", [])]
     return RecordingFakeChatModel(responses=responses)
 
 
@@ -111,8 +120,8 @@ def test_chat_requests_are_independent(make_client: ClientFactory) -> None:
     client.post("/api/chat", json=question("Primera pregunta sobre comisiones"))
     client.post("/api/chat", json=question("Segunda pregunta"))
 
-    assert len(model.received) == 2  # no rewrite call for the second question
-    second_call = model.received[1]
+    assert len(model.received) == 4  # a search turn and an answer turn per question
+    second_call = model.received[2]
     assert len(second_call) == 2  # system prompt + this question only, no history
     assert "Primera pregunta" not in str(second_call[1].content)
     assert "Segunda pregunta" in str(second_call[1].content)
@@ -192,7 +201,8 @@ def test_chat_uses_only_six_most_recent_exchanges(make_client: ClientFactory) ->
 
     generation = call_text(model.received[-1])
 
-    assert len(model.received[-1]) == 1 + 2 * 6 + 1  # system + 6 exchanges + this question
+    # system + 6 exchanges + this question + this question's search call and its result
+    assert len(model.received[-1]) == 1 + 2 * 6 + 1 + 2
     for n in range(2, 9):
         assert f"Pregunta número {n}" in generation
     assert "Pregunta número 1" not in generation
@@ -218,7 +228,7 @@ def test_chat_expired_conversation_returns_404(
 
     assert response.status_code == 404
     assert isinstance(response.json()["detail"], str)
-    assert len(model.received) == 1
+    assert len(model.received) == 2
     assert embeddings.embedded_texts == []
 
 
@@ -256,9 +266,9 @@ def test_chat_failed_question_is_not_in_conversation(make_client: ClientFactory)
     model = FlakyChatModel(
         responses=[
             model_reply("Respuesta 1.", ["NIM-020"]),
-            rewrite_reply("Pregunta autónoma fallida"),
+            search_call("Pregunta autónoma fallida"),
             FAIL,
-            rewrite_reply("Pregunta autónoma siguiente"),
+            search_call("Pregunta autónoma siguiente"),
             model_reply("Respuesta siguiente.", ["NIM-020"]),
         ]
     )
@@ -282,7 +292,7 @@ def test_chat_failed_question_does_not_extend_conversation(
     make_client: ClientFactory, clock: FakeClock
 ) -> None:
     model = FlakyChatModel(
-        responses=[model_reply("Respuesta 1.", ["NIM-020"]), rewrite_reply("Pregunta"), FAIL]
+        responses=[model_reply("Respuesta 1.", ["NIM-020"]), search_call("Pregunta"), FAIL]
     )
     client = make_client(model)
     conversation_id = start_conversation(client, FEE_QUESTION)
@@ -300,9 +310,10 @@ def test_chat_failed_question_does_not_extend_conversation(
 def test_chat_does_not_carry_sources_from_earlier_answers(make_client: ClientFactory) -> None:
     model = RecordingFakeChatModel(
         responses=[
+            search_call(FEE_QUESTION),
             model_reply("Cuesta 1,5% del monto.", ["NIM-020"]),
-            rewrite_reply("Pregunta autónoma"),
-            model_reply("De nada.", []),
+            # No search for this question: the earlier question's documents are not retrieved.
+            model_reply("De nada.", ["NIM-020"]),
         ]
     )
     client = make_client(model)
@@ -315,7 +326,10 @@ def test_chat_does_not_carry_sources_from_earlier_answers(make_client: ClientFac
 
 def test_chat_sources_include_titles_without_duplicates(make_client: ClientFactory) -> None:
     model = RecordingFakeChatModel(
-        responses=[model_reply("Respuesta.", ["NIM-020", "NIM-004", "NIM-020"])]
+        responses=[
+            search_call(FEE_QUESTION),
+            model_reply("Respuesta.", ["NIM-020", "NIM-004", "NIM-020"]),
+        ]
     )
 
     body = make_client(model).post("/api/chat", json={"question": FEE_QUESTION}).json()
@@ -327,7 +341,9 @@ def test_chat_sources_include_titles_without_duplicates(make_client: ClientFacto
 
 
 def test_chat_drops_unretrieved_source_ids(make_client: ClientFactory) -> None:
-    model = RecordingFakeChatModel(responses=[model_reply("Respuesta.", ["NIM-020", "NIM-999"])])
+    model = RecordingFakeChatModel(
+        responses=[search_call(FEE_QUESTION), model_reply("Respuesta.", ["NIM-020", "NIM-999"])]
+    )
 
     body = make_client(model).post("/api/chat", json={"question": FEE_QUESTION}).json()
 
@@ -336,7 +352,10 @@ def test_chat_drops_unretrieved_source_ids(make_client: ClientFactory) -> None:
 
 def test_chat_no_information_returns_empty_sources(make_client: ClientFactory) -> None:
     model = RecordingFakeChatModel(
-        responses=[model_reply("El Centro de Ayuda no tiene esa información.", ["NIM-020"], "none")]
+        responses=[
+            search_call("capital de Australia"),
+            model_reply("El Centro de Ayuda no tiene esa información.", ["NIM-020"], "none"),
+        ]
     )
 
     response = make_client(model).post("/api/chat", json={"question": "¿Capital de Australia?"})
@@ -348,11 +367,12 @@ def test_chat_no_information_returns_empty_sources(make_client: ClientFactory) -
 def test_chat_partial_answer_keeps_sources(make_client: ClientFactory) -> None:
     model = RecordingFakeChatModel(
         responses=[
+            search_call(FEE_QUESTION),
             model_reply(
                 "Cuesta 1,5% del monto. El Centro de Ayuda no tiene información sobre lo demás.",
                 ["NIM-020"],
                 "partial",
-            )
+            ),
         ]
     )
 
@@ -386,27 +406,112 @@ def test_chat_returns_503_when_model_fails(make_client: ClientFactory) -> None:
     }
 
 
-def test_chat_embeds_only_question(
+def test_chat_embeds_each_search_query(
     make_client: ClientFactory, embeddings: CountingFakeEmbeddings
 ) -> None:
-    make_client(fee_model()).post("/api/chat", json={"question": FEE_QUESTION})
+    model = RecordingFakeChatModel(
+        responses=[
+            search_call("comisión retiro inmediato"),
+            search_call("tiempo retiro inmediato"),
+            model_reply("Respuesta.", ["NIM-020"]),
+        ]
+    )
 
-    assert embeddings.embedded_texts == [FEE_QUESTION]
+    make_client(model).post("/api/chat", json={"question": FEE_QUESTION})
+
+    assert embeddings.embedded_texts == ["comisión retiro inmediato", "tiempo retiro inmediato"]
 
 
-def test_chat_follow_up_embeds_only_search_query(
+def test_chat_sources_from_every_search(
+    make_client: ClientFactory, settings: Settings, engine: PGEngine
+) -> None:
+    # With k=1, a search for a document's own indexed text retrieves exactly that document.
+    texts = {d.metadata["id"]: d.page_content for d in indexed_documents(settings, engine)}
+    model = RecordingFakeChatModel(
+        responses=[
+            search_call(texts["NIM-020"]),
+            search_call(texts["NIM-004"]),
+            model_reply("Respuesta.", ["NIM-020", "NIM-004"]),
+        ]
+    )
+    client = make_client(model, retrieval_k=1)
+
+    body = client.post("/api/chat", json={"question": FEE_QUESTION}).json()
+
+    assert [s["id"] for s in body["sources"]] == ["NIM-020", "NIM-004"]
+
+
+def test_chat_stops_searching_at_limit(
     make_client: ClientFactory, embeddings: CountingFakeEmbeddings
 ) -> None:
-    client = make_client(conversation_model(2))
+    model = RecordingFakeChatModel(
+        responses=[
+            search_call("consulta 1"),
+            search_call("consulta 2"),
+            search_call("consulta 3", "consulta 4"),
+            model_reply("Respuesta.", ["NIM-020"]),
+        ]
+    )
+
+    response = make_client(model).post("/api/chat", json={"question": FEE_QUESTION})
+
+    assert response.status_code == 200
+    assert response.json()["sources"] == [{"id": "NIM-020", "title": FEE_TITLE}]
+    assert embeddings.embedded_texts == ["consulta 1", "consulta 2", "consulta 3"]
+    assert [b["tool_choice"] for b in model.bound] == ["required", None, None, "none"]
+
+
+def test_chat_first_turn_must_search(make_client: ClientFactory) -> None:
+    model = fee_model()
+
+    make_client(model).post("/api/chat", json={"question": FEE_QUESTION})
+
+    assert [b["tool_choice"] for b in model.bound] == ["required", None]
+
+
+def test_chat_returns_503_when_model_searches_past_limit(make_client: ClientFactory) -> None:
+    model = RecordingFakeChatModel(responses=[search_call(f"consulta {n}") for n in range(1, 5)])
+
+    response = make_client(model).post("/api/chat", json={"question": FEE_QUESTION})
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": UNAVAILABLE}
+
+
+def test_chat_answer_without_search_has_no_sources(
+    make_client: ClientFactory, embeddings: CountingFakeEmbeddings
+) -> None:
+    # OpenAI cannot skip the required first search; the fake ignores tool_choice, so this guards
+    # the sources filter should a model answer anyway.
+    model = RecordingFakeChatModel(responses=[model_reply("Respuesta.", ["NIM-020"])])
+
+    response = make_client(model).post("/api/chat", json={"question": FEE_QUESTION})
+
+    assert response.status_code == 200
+    assert response.json()["sources"] == []
+    assert embeddings.embedded_texts == []
+
+
+def test_chat_conversation_holds_no_searches(make_client: ClientFactory) -> None:
+    model = RecordingFakeChatModel(
+        responses=[
+            search_call("consulta de comisiones"),
+            model_reply("Respuesta 1.", ["NIM-020"]),
+            model_reply("Respuesta 2.", []),
+        ]
+    )
+    client = make_client(model)
     conversation_id = start_conversation(client, FEE_QUESTION)
-    embeddings.embedded_texts.clear()
 
     client.post("/api/chat", json=question("¿y en Chile?", conversation_id))
 
-    assert embeddings.embedded_texts == ["Pregunta autónoma 2"]
+    follow_up = model.received[-1]
+    assert len(follow_up) == 4  # system + the earlier question and answer + this question
+    assert FEE_QUESTION in call_text(follow_up)
+    assert "Respuesta 1." in call_text(follow_up)
+    assert "consulta de comisiones" not in str(follow_up)
+    assert "<document" not in str(follow_up)
 
-
-UNAVAILABLE = "The assistant is temporarily unavailable. Please try again later."
 
 Event = tuple[str, dict[str, Any]]
 
@@ -484,7 +589,9 @@ def test_chat_stream_follow_up_continues_conversation(make_client: ClientFactory
 
 
 def test_chat_stream_deltas_join_to_answer(make_client: ClientFactory) -> None:
-    model = RecordingFakeChatModel(responses=[model_reply("Te cobramos 1,5%.", ["NIM-020"])])
+    model = RecordingFakeChatModel(
+        responses=[search_call(FEE_QUESTION), model_reply("Te cobramos 1,5%.", ["NIM-020"])]
+    )
 
     events = ask_streaming(make_client(model), question(FEE_QUESTION))
 
@@ -509,13 +616,16 @@ def test_chat_stream_streams_only_answer_text(make_client: ClientFactory) -> Non
 
     events = ask_streaming(client, question("¿y en Chile?", conversation_id))
 
-    # Exactly the answer: no rewritten question, language, coverage or source ids.
+    # Exactly the answer: no search query, language, coverage or source ids.
     assert deltas(events) == "Respuesta 2."
+    assert "Pregunta autónoma" not in deltas(events)
 
 
 def test_chat_stream_waits_for_parseable_reply_start(make_client: ClientFactory) -> None:
     # The real model's first chunk is empty; a leading newline is likewise unparseable alone.
-    model = RecordingFakeChatModel(responses=["\n" + model_reply("Te cobramos 1,5%.", ["NIM-020"])])
+    model = RecordingFakeChatModel(
+        responses=[search_call(FEE_QUESTION), "\n" + model_reply("Te cobramos 1,5%.", ["NIM-020"])]
+    )
 
     events = ask_streaming(make_client(model), question(FEE_QUESTION))
 
@@ -524,7 +634,9 @@ def test_chat_stream_waits_for_parseable_reply_start(make_client: ClientFactory)
 
 
 def test_chat_stream_drops_unretrieved_source_ids(make_client: ClientFactory) -> None:
-    model = RecordingFakeChatModel(responses=[model_reply("Respuesta.", ["NIM-020", "NIM-999"])])
+    model = RecordingFakeChatModel(
+        responses=[search_call(FEE_QUESTION), model_reply("Respuesta.", ["NIM-020", "NIM-999"])]
+    )
 
     _, data = ask_streaming(make_client(model), question(FEE_QUESTION))[-1]
 
@@ -536,12 +648,13 @@ def test_chat_stream_done_matches_json_answer(make_client: ClientFactory, answer
     reply = model_reply(answer, ["NIM-020", "NIM-999"])
 
     json_body = (
-        make_client(RecordingFakeChatModel(responses=[reply]))
+        make_client(RecordingFakeChatModel(responses=[search_call(FEE_QUESTION), reply]))
         .post("/api/chat", json=question(FEE_QUESTION))
         .json()
     )
     _, done = ask_streaming(
-        make_client(RecordingFakeChatModel(responses=[reply])), question(FEE_QUESTION)
+        make_client(RecordingFakeChatModel(responses=[search_call(FEE_QUESTION), reply])),
+        question(FEE_QUESTION),
     )[-1]
 
     assert done["answer"] == json_body["answer"]
@@ -574,7 +687,9 @@ def test_chat_stream_ends_with_error_when_model_fails(make_client: ClientFactory
 
 def test_chat_stream_ends_with_error_after_partial_answer(make_client: ClientFactory) -> None:
     reply = model_reply("Te cobramos 1,5%.", ["NIM-020"])
-    model = FlakyChatModel(responses=[reply[: reply.index("1,5")] + FAIL])
+    model = FlakyChatModel(
+        responses=[search_call(FEE_QUESTION), reply[: reply.index("1,5")] + FAIL]
+    )
 
     events = ask_streaming(make_client(model), question(FEE_QUESTION))
 
@@ -587,9 +702,9 @@ def test_chat_stream_failed_question_is_not_in_conversation(make_client: ClientF
     model = FlakyChatModel(
         responses=[
             model_reply("Respuesta 1.", ["NIM-020"]),
-            rewrite_reply("Pregunta autónoma fallida"),
+            search_call("Pregunta autónoma fallida"),
             FAIL,
-            rewrite_reply("Pregunta autónoma siguiente"),
+            search_call("Pregunta autónoma siguiente"),
             model_reply("Respuesta siguiente.", ["NIM-020"]),
         ]
     )
@@ -656,11 +771,11 @@ def test_chat_stream_disconnect_leaves_question_out(
     model = PausingChatModel(
         responses=[
             model_reply("Respuesta 1.", ["NIM-020"]),
-            rewrite_reply("Pregunta autónoma cortada"),
+            search_call("Pregunta autónoma cortada"),
             cut_reply("Respuesta cortada."),
-            rewrite_reply("Pregunta autónoma siguiente"),
+            search_call("Pregunta autónoma siguiente"),
             model_reply("Respuesta siguiente.", ["NIM-020"]),
-            rewrite_reply("Pregunta autónoma cortada otra vez"),
+            search_call("Pregunta autónoma cortada otra vez"),
             cut_reply("Respuesta cortada otra vez."),
         ]
     )

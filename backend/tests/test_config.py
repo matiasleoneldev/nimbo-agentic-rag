@@ -16,4 +16,5 @@ def test_config_resolves_paths_from_any_cwd(
     assert settings.help_center_dir == REPO_ROOT / "nimbo-help-center"
     assert settings.labels["countries"]["AR"] == "Argentina"
     assert settings.max_exchanges == 6
+    assert settings.max_searches == 3
     assert settings.conversation_ttl_seconds == 900

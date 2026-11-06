@@ -12,7 +12,7 @@ The chat answers through a fixed pipeline (rewrite, retrieve, generate). Every q
 - **BREAKING (behavior)**: The separate rewrite step is removed. The agent writes its own self-contained search queries from the conversation and the question. The first question of a conversation is no longer searched exactly as sent. (Decided 2026-11-06.)
 - The documents retrieved for a question are those of all its searches, without duplicates. `sources` may only contain those. A question answered with no search has no retrieved documents, so its `sources` is empty. (Decided 2026-11-06.)
 - The searches, their queries and their results never become part of the conversation. A conversation still holds only questions and answers. (Decided 2026-11-06.)
-- Under-retrieval risk accepted: the model is not forced to search. It is mitigated in this change with a prompt rule (search before answering any question about Nimbo) and a new eval that counts the questions about Nimbo answered without a search. (Decided 2026-11-06.)
+- Under-retrieval risk accepted: the model is not forced to search. (Superseded 2026-11-06: the evals measured `searched` below 100%, so under the Acceptance rule the first turn is forced to search.) It is mitigated in this change with a prompt rule (search before answering any question about Nimbo) and a new eval that counts the questions about Nimbo answered without a search. (Decided 2026-11-06.)
 - The model's final answer uses OpenAI structured outputs (`json_schema`, strict) together with the tool. Parallel tool calls are turned off, because strict mode requires it. This replaces the `json_object` mode and the format instructions in the prompt. (Decided 2026-11-06, verified in the LangChain OpenAI docs.)
 - The streamed `delta` events carry only the final answer text, never a search request or its query. (Decided 2026-11-06.)
 - `openspec/config.yaml` roadmap: the chatbot is now an agent with tools, and today its only tool is the help-center search. Every new tool (account lookups, case actions) still needs its own proposal. (Decided 2026-11-06.)
@@ -21,7 +21,16 @@ The chat answers through a fixed pipeline (rewrite, retrieve, generate). Every q
 - Acceptance (Decided 2026-11-06):
   - The final configuration is the one with the fewest tokens per question among those where no metric falls below the baseline.
   - `searched` must be 100% across all repetitions. If it is not, the first turn is forced to search (`tool_choice="required"`).
-  - If no configuration matches the baseline, the prompt is revised and the evals re-run, at most twice. If it still does not match, the change is not merged. A latency loss is accepted and reported; a correctness loss is not.
+  - If no configuration matches the baseline, the prompt is revised and the evals re-run, at most twice. If it still does not match, the change is not merged. A latency loss is accepted and reported; a correctness loss is not. (Superseded by the revision below.)
+- Acceptance revision (Decided 2026-11-06, after the sweep). No configuration matched the baseline after two prompt iterations (design.md, Results). The agent is still merged, because the support agent on the roadmap builds on this loop. Its measured correctness loss is accepted under these rules:
+  - Non-negotiable: `grounded`, `no_forbidden_text` and `searched` stay at 100% on both datasets. The agent never invents facts about Nimbo, never repeats a sensitive value, and searches every question about Nimbo.
+  - The accepted configuration is iteration 1, `k=4, max_searches=3`. Its pass rates are the floor:
+    - `support-chat-answers`: `sources` 62/66, `meets_expectation` 63/66, `correct_language` 65/66, every other metric 100%.
+    - `support-chat-conversations`: `sources` 22/24, every other metric 100%.
+  - The next change raises quality: first a stronger chat model (only `app.yaml` and an eval run), then, if needed, a step that splits the question into topics. Either one must beat this floor without lowering any 100% metric, measured on the same datasets.
+  - Known defects, kept until that change:
+    - Multi-topic questions sometimes get one narrow search and miss a document (`verify-2fa-card-es`, `fee-and-timing-instant-withdrawal-es`, and `follow-up-country-es` in conversations). The "Question that needs two documents" and "Follow-up understood from the conversation" scenarios therefore pass in most repetitions, not all.
+    - An English question was once answered in Spanish after a Spanish search (`money-on-hold-en`, 1 of 3).
 - Out of scope (Decided 2026-11-06):
   - Any tool other than the search.
   - Showing searches as progress events in the stream or in the page.

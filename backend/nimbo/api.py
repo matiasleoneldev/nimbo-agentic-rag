@@ -49,8 +49,8 @@ def get_settings(request: Request) -> Settings:
 
 
 def get_chat_model(settings: Annotated[Settings, Depends(get_settings)]) -> ChatModel:
-    # JSON mode guarantees a parseable object for PydanticOutputParser.
-    return ChatOpenAI(model=settings.chat_model).bind(response_format={"type": "json_object"})
+    # Unbound: chat.py binds the search tool and the structured final answer.
+    return ChatOpenAI(model=settings.chat_model)
 
 
 def get_embeddings(settings: Annotated[Settings, Depends(get_settings)]) -> Embeddings:
@@ -119,7 +119,9 @@ def create_app(
         store = PGVectorStore.create_sync(
             engine=app.state.engine, table_name=settings.table, embedding_service=embeddings
         )
-        return ChatContext(model, store, settings.retrieval_k, settings.max_exchanges)
+        return ChatContext(
+            model, store, settings.retrieval_k, settings.max_exchanges, settings.max_searches
+        )
 
     def discard_unanswered(body: ChatRequest, conversation_id: str) -> None:
         if body.conversation_id is None:

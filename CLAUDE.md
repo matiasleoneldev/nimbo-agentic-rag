@@ -10,7 +10,7 @@ RAG chatbot (portfolio demo) answering questions over synthetic support docs (Sp
   - `config.py`: `app.yaml` + env.
   - `pdf_text.py`: pdfplumber, tables as `a | b` rows.
   - `ingest.py`: `python -m nimbo.ingest`.
-  - `chat.py`: LangGraph graph (rewrite, retrieve, generate), `ask()`.
+  - `chat.py`: LangGraph agent loop with a help-center search tool, `ask()`.
   - `conversations.py`: open conversations and their expiry.
   - `rate_limit.py`
   - `api.py`: `uvicorn nimbo.api:create_app --factory`.
@@ -54,7 +54,7 @@ Gotchas:
 
 - Stack: Python 3.14, FastAPI, LangChain; OpenAI-only LLM/embeddings; LangSmith tracing/evals; PostgreSQL + pgvector via Docker. Don't propose alternatives without a proposal.
 - Embeddings computed once at ingestion, never per query.
-- Roadmap: a LangGraph support agent comes later — do not add agent/graph features or abstractions in anticipation.
+- Roadmap: since 2026-11-06 (change `agentic-rag`) the chat is a LangGraph agent whose only tool is the help-center search. Every new tool or support-agent capability needs its own proposal; no abstractions in anticipation.
 - Everything (code, identifiers, comments, OpenSpec artifacts) in English.
 - Must run on Windows (Docker Desktop + WSL2): no bash-only scripts or Unix-only paths.
 - Secrets via env vars only; keep `backend/.env.example` (`OPENAI_API_KEY`, `LANGSMITH_*`, `DATABASE_URL`, `TEST_DATABASE_URL`, `CORS_ORIGINS`) and `frontend/.env.example` (`NEXT_PUBLIC_API_URL`) in sync.

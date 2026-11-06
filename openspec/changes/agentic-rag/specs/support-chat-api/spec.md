@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Help-center searches
-To answer a question, the system SHALL search the indexed documents as many times as it decides, including none. It MUST write each search query itself from the question and the earlier exchanges of the conversation, so that the query is self-contained. A question SHALL get at most the configured maximum number of searches; once that number is reached, the answer MUST be generated from the documents already retrieved.
+To answer a question, the system SHALL search the indexed documents at least once, and as many more times as it decides. It MUST write each search query itself from the question and the earlier exchanges of the conversation, so that the query is self-contained. A question SHALL get at most the configured maximum number of searches; once that number is reached, the answer MUST be generated from the documents already retrieved.
 
 #### Scenario: Referential follow-up retrieves the right document
 - **WHEN** a client asks "¿Cuánto cuesta un retiro inmediato?" and then, in the same conversation, "¿y cuánto tarda?"
@@ -20,7 +20,7 @@ To answer a question, the system SHALL search the indexed documents as many time
 - **THEN** exactly 3 searches run and the question is answered with the documents they retrieved
 
 #### Scenario: Answer without a search has no sources
-- **WHEN** an answer is generated without any search, and it cites a document id
+- **WHEN** the model returns an answer before any search has run (despite the required first search), and it cites a document id
 - **THEN** the response `sources` is empty
 
 ## MODIFIED Requirements

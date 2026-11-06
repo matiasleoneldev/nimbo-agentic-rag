@@ -11,9 +11,11 @@ context: |
   files.
   Never use real company names, branding or data.
 
-  Roadmap: the RAG will later evolve into a LangGraph support agent able to
-  resolve cases. Not in scope yet; do not add agent/graph features until a
-  proposal introduces them, and do not add abstractions in anticipation of it.
+  Roadmap: since 2026-11-06 (change agentic-rag) the chatbot is a LangGraph
+  agent with tools. Its only tool is the help-center search. It will later grow
+  into a support agent able to resolve cases, but every new tool (account
+  lookups, case actions) or support-agent capability needs its own proposal.
+  Do not add abstractions in anticipation of them.
 
   Source of truth: openspec/specs/ is authoritative. Every observable behavior
   change MUST go through an OpenSpec change (proposal + deltas) or be

@@ -2,14 +2,18 @@
 
 import json
 import threading
-from collections.abc import Iterator
+import uuid
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, Literal
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.embeddings import DeterministicFakeEmbedding
+from langchain_core.language_models import LanguageModelInput
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
-from langchain_core.messages import AIMessageChunk, BaseMessage
-from langchain_core.outputs import ChatGenerationChunk
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+from langchain_core.runnables import Runnable
+from langchain_core.tools import BaseTool
 from openai import OpenAIError
 from pydantic import ConfigDict, Field
 
@@ -44,10 +48,40 @@ class CountingFakeEmbeddings(DeterministicFakeEmbedding):
         return super().embed_query(text)
 
 
+SEARCH_KEY = "<search>"
+
+
+def search_call(*queries: str) -> str:
+    """A scripted reply that asks for one help-center search per query, all in one turn."""
+    return json.dumps({SEARCH_KEY: list(queries)})
+
+
+def _searches(reply: str) -> list[str] | None:
+    try:
+        parsed = json.loads(reply)
+    except json.JSONDecodeError:
+        return None
+    return parsed.get(SEARCH_KEY) if isinstance(parsed, dict) else None
+
+
 class RecordingFakeChatModel(FakeListChatModel):
-    """Replies with canned JSON strings and records the messages it received."""
+    """Replies with canned strings and records the messages and the tool bindings it received.
+
+    A `search_call` reply becomes an AIMessage with tool calls; any other string is the content.
+    """
 
     received: list[list[BaseMessage]] = []
+    bound: list[dict[str, Any]] = []
+
+    def bind_tools(
+        self,
+        tools: Sequence[dict[str, Any] | type | Callable[..., Any] | BaseTool],
+        *,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> Runnable[LanguageModelInput, AIMessage]:
+        self.bound.append({"tool_choice": tool_choice, **kwargs})
+        return self
 
     def _call(
         self,
@@ -59,6 +93,33 @@ class RecordingFakeChatModel(FakeListChatModel):
         self.received.append(messages)
         return super()._call(messages, stop, run_manager, **kwargs)
 
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        reply = self._call(messages, stop, run_manager, **kwargs)
+        queries = _searches(reply)
+        message = (
+            AIMessage(content=reply)
+            if queries is None
+            else AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "search_help_center",
+                        "args": {"query": q},
+                        "id": f"call_{uuid.uuid4().hex}",
+                        "type": "tool_call",
+                    }
+                    for q in queries
+                ],
+            )
+        )
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
     def _stream(
         self,
         messages: list[BaseMessage],
@@ -66,14 +127,37 @@ class RecordingFakeChatModel(FakeListChatModel):
         run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
-        # LangChain calls _stream instead of _call while the graph is streamed; one char per chunk.
-        reply = self._call(messages, stop, run_manager, **kwargs)
-        for i, char in enumerate(reply):
-            yield ChatGenerationChunk(
-                message=AIMessageChunk(
-                    content=char, chunk_position="last" if i == len(reply) - 1 else None
-                )
+        # LangChain calls _stream instead of _generate while the graph is streamed.
+        yield from _chunks(self._call(messages, stop, run_manager, **kwargs))
+
+
+def _chunks(reply: str, last: bool = True) -> Iterator[ChatGenerationChunk]:
+    """A search_call reply as one tool-call chunk; any other text one char per chunk."""
+    queries = _searches(reply)
+    if queries is not None:
+        yield ChatGenerationChunk(
+            message=AIMessageChunk(
+                content="",
+                tool_call_chunks=[
+                    {
+                        "name": "search_help_center",
+                        "args": json.dumps({"query": q}),
+                        "id": f"call_{uuid.uuid4().hex}",
+                        "index": i,
+                        "type": "tool_call_chunk",
+                    }
+                    for i, q in enumerate(queries)
+                ],
+                chunk_position="last",
             )
+        )
+        return
+    for i, char in enumerate(reply):
+        yield ChatGenerationChunk(
+            message=AIMessageChunk(
+                content=char, chunk_position="last" if last and i == len(reply) - 1 else None
+            )
+        )
 
 
 FAIL = "<fail>"
@@ -107,8 +191,7 @@ class FlakyChatModel(RecordingFakeChatModel):
     ) -> Iterator[ChatGenerationChunk]:
         reply = RecordingFakeChatModel._call(self, messages, stop, run_manager, **kwargs)
         head, failed, _ = reply.partition(FAIL)
-        for char in head:
-            yield ChatGenerationChunk(message=AIMessageChunk(content=char))
+        yield from _chunks(head, last=not failed)
         if failed:
             raise OpenAIError("provider unavailable")
 
@@ -133,15 +216,15 @@ class PausingChatModel(RecordingFakeChatModel):
         run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
-        head, paused, tail = self._call(messages, stop, run_manager, **kwargs).partition(PAUSE)
-        for char in head:
-            yield ChatGenerationChunk(message=AIMessageChunk(content=char))
-        if paused:
-            self.resume.wait(timeout=10)
-        for char in tail:
-            yield ChatGenerationChunk(message=AIMessageChunk(content=char))
-        if paused:
-            self.finished.set()
+        reply = self._call(messages, stop, run_manager, **kwargs)
+        head, paused, tail = reply.partition(PAUSE)
+        if not paused:
+            yield from _chunks(reply)
+            return
+        yield from _chunks(head, last=False)
+        self.resume.wait(timeout=10)
+        yield from _chunks(tail)
+        self.finished.set()
 
 
 class FailingChatModel(RecordingFakeChatModel):
@@ -168,7 +251,3 @@ def model_reply(
             "source_ids": source_ids,
         }
     )
-
-
-def rewrite_reply(search_query: str) -> str:
-    return json.dumps({"search_query": search_query})

@@ -13,8 +13,10 @@ models:
   vector_size: 3072
 
 retrieval:
-  # Number of indexed documents passed to the model per question.
-  k: 8
+  # Number of indexed documents each help-center search returns.
+  k: 4
+  # Most searches the agent may run for one question; then it must answer with what it has.
+  max_searches: 3
   table: help_center_documents
 
 conversations:

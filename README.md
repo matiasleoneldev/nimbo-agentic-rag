@@ -66,7 +66,9 @@ A stream that ends without `done` (an error or a client disconnect) leaves the q
 curl.exe -N -X POST http://localhost:8000/api/chat/stream -H "Content-Type: application/json" -d '{\"question\": \"¿Cuánto cuesta un retiro inmediato?\"}'
 ```
 
-Conversation memory: follow-up questions are understood from the 6 most recent exchanges of the same conversation (`conversations.max_exchanges` in `backend/app.yaml`); a follow-up is first rewritten into a self-contained question, which is what gets retrieved. A conversation expires 15 minutes after its last answered question (`expires_in_seconds` is 900); the page warns 5 minutes before. Conversations live in the API process memory: they are lost when the page reloads or the API restarts, so **the API must run as a single process** (one worker, one replica). The answer uses the question's language. The page language follows the browser's `Accept-Language`: Spanish for `es*` (and `ca`, `gl`, `eu`), otherwise English. Models are set in `backend/app.yaml`. Allowed browser origins come from `CORS_ORIGINS`.
+How a question is answered: the chat is an agent with one tool, the help-center search. For each question it always searches first, then the model decides whether to search again and with which self-contained query, and writes the answer from the documents those searches returned. Each search returns `retrieval.k` documents, and a question gets at most `retrieval.max_searches` searches (both in `backend/app.yaml`); then the model must answer with what it has. `sources` only lists documents retrieved for the current question.
+
+Conversation memory: follow-up questions are understood from the 6 most recent exchanges of the same conversation (`conversations.max_exchanges` in `backend/app.yaml`). A conversation holds only questions and answers, never the searches or their documents. A conversation expires 15 minutes after its last answered question (`expires_in_seconds` is 900); the page warns 5 minutes before. Conversations live in the API process memory: they are lost when the page reloads or the API restarts, so **the API must run as a single process** (one worker, one replica). The answer uses the question's language. The page language follows the browser's `Accept-Language`: Spanish for `es*` (and `ca`, `gl`, `eu`), otherwise English. Models are set in `backend/app.yaml`. Allowed browser origins come from `CORS_ORIGINS`.
 
 ## Answer-quality evals (LangSmith)
 
@@ -75,12 +77,12 @@ cd backend
 poetry run python -m evals.run_evals
 ```
 
-Runs the real chain (OpenAI, costs credits) over two LangSmith datasets, one experiment each: `support-chat-answers` (16 single questions, each in a new conversation) and `support-chat-conversations` (8 examples: earlier turns asked live in one conversation, then the graded follow-up). Datasets are created on the first run, and examples missing by name are added on later runs. It needs an ingested index plus `OPENAI_API_KEY`, `LANGSMITH_API_KEY` and `DATABASE_URL`. Scoring:
+Runs the real agent (OpenAI, costs credits) over two LangSmith datasets, one experiment each with 3 repetitions: `support-chat-answers` (22 single questions, each in a new conversation, including compound questions that need two or three documents) and `support-chat-conversations` (8 examples: earlier turns asked live in one conversation, then the graded follow-up). Experiments are named `agentic-<chat model>-k<k>-s<max_searches>`; the baseline of the earlier fixed pipeline is `pipeline-<chat model>-k<k>` (see `openspec/changes/agentic-rag/design.md`). Datasets are created on the first run, and examples missing by name are added on later runs. It needs an ingested index plus `OPENAI_API_KEY`, `LANGSMITH_API_KEY` and `DATABASE_URL`. Scoring:
 
-- Code checks: expected sources and no leaked card number.
+- Code checks: expected sources, no leaked card number, `searched` (a question about Nimbo got at least one search) and `search_count` (searches per question, reported as a mean).
 - An LLM judge (`gpt-4.1-mini`) checks grounding, language, plain text and the per-example expectation, plus voseo on Spanish examples.
 
-Results on 2026-10-25 (`gpt-4.1-mini`, `text-embedding-3-large`, k = 8):
+Results of the earlier pipeline on 2026-10-25 (`gpt-4.1-mini`, `text-embedding-3-large`, k = 8, 1 repetition):
 
 | Metric | `support-chat-answers` | `support-chat-conversations` |
 |---|---|---|

@@ -331,6 +331,20 @@ def no_forbidden_text(outputs: dict[str, Any], reference_outputs: dict[str, Any]
     return {"key": "no_forbidden_text", "score": not leaked}
 
 
+def searched(outputs: dict[str, Any], reference_outputs: dict[str, Any]) -> dict[str, Any]:
+    """A question about Nimbo is answered from at least one search (not graded off-topic)."""
+    if reference_outputs["no_information"]:
+        return {"results": []}
+    return {"key": "searched", "score": bool(outputs["searches"])}
+
+
+def search_count(outputs: dict[str, Any]) -> dict[str, Any]:
+    return {"key": "search_count", "score": len(outputs["searches"])}
+
+
+NUMERIC_METRICS = {"search_count"}
+
+
 class Verdict(BaseModel):
     reasoning: str
     grounded: bool = Field(
@@ -392,25 +406,31 @@ def _run(
     results = client.evaluate(
         target,
         data=dataset_name,
-        evaluators=[sources, no_forbidden_text, judge],
+        evaluators=[sources, no_forbidden_text, searched, search_count, judge],
         experiment_prefix=prefix,
         metadata=metadata,
         # Answers vary between runs; 3 repetitions keep pipeline vs agent differences above noise.
         num_repetitions=3,
     )
 
-    # Per-metric pass rate, plus each failure with its example name.
+    # Per-metric pass rate (mean for numeric metrics), plus each failure with its example name.
     print(f"== {dataset_name}")
     scores: dict[str, list[bool]] = {}
+    numeric: dict[str, list[float]] = {}
     for row in results:
         name = row["example"].metadata.get("name") if row["example"].metadata else "?"
         for result in row["evaluation_results"]["results"]:
+            if result.key in NUMERIC_METRICS:
+                numeric.setdefault(result.key, []).append(float(result.score or 0))
+                continue
             passed = bool(result.score)
             scores.setdefault(result.key, []).append(passed)
             if not passed:
                 print(f"FAIL {result.key}: {name} -- {result.comment or ''}")
     for key, values in scores.items():
         print(f"{key}: {sum(values)}/{len(values)}")
+    for key, numbers in numeric.items():
+        print(f"{key}: mean {sum(numbers) / len(numbers):.2f}")
 
 
 def main() -> None:
@@ -421,23 +441,33 @@ def main() -> None:
         engine=engine, table_name=settings.table, embedding_service=get_embeddings(settings)
     )
     context = ChatContext(
-        get_chat_model(settings), store, settings.retrieval_k, settings.max_exchanges
+        get_chat_model(settings),
+        store,
+        settings.retrieval_k,
+        settings.max_exchanges,
+        settings.max_searches,
     )
     graph = build_graph(InMemorySaver())
 
+    def graded(question: str, conversation_id: str) -> dict[str, Any]:
+        """The answer, plus the search queries of the graded question."""
+        answer = ask(graph, question, conversation_id, context).model_dump()
+        state = graph.get_state({"configurable": {"thread_id": conversation_id}}).values
+        return {**answer, "searches": state["searches"]}
+
     def answer(inputs: dict[str, Any]) -> dict[str, Any]:
         # A new conversation per example: each question is answered on its own.
-        return ask(graph, inputs["question"], uuid.uuid4().hex, context).model_dump()
+        return graded(inputs["question"], uuid.uuid4().hex)
 
     def converse(inputs: dict[str, Any]) -> dict[str, Any]:
         conversation_id = uuid.uuid4().hex
         for turn in inputs["turns"]:
             ask(graph, turn, conversation_id, context)
-        return ask(graph, inputs["question"], conversation_id, context).model_dump()
+        return graded(inputs["question"], conversation_id)
 
     client = Client()
     metadata = {"models": {"chat": settings.chat_model, "embeddings": settings.embedding_model}}
-    prefix = f"pipeline-{settings.chat_model}-k{settings.retrieval_k}"
+    prefix = f"agentic-{settings.chat_model}-k{settings.retrieval_k}-s{settings.max_searches}"
     _run(
         client,
         DATASET,
