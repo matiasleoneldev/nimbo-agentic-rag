@@ -45,7 +45,7 @@ The `question` SHALL be a string that, after trimming surrounding whitespace, ha
 - **THEN** the response is `422`
 
 ### Requirement: Answers are grounded in help-center documents
-The `answer` SHALL be based only on the content of the indexed documents retrieved for the question, and MUST NOT state facts about Nimbo that those documents do not contain. Earlier exchanges of the conversation SHALL be used only to understand what the question asks: a fact stated in an earlier answer MUST NOT be used unless the documents retrieved for the current question contain it.
+The `answer` SHALL be based only on the content of the indexed documents retrieved for the question, which are the documents returned by all of its searches, without duplicates. It MUST NOT state facts about Nimbo that those documents do not contain. Earlier exchanges of the conversation SHALL be used only to understand what the question asks: a fact stated in an earlier answer MUST NOT be used unless the documents retrieved for the current question contain it.
 
 #### Scenario: Fee question answered from the fee document
 - **WHEN** a client asks "¿Cuánto cuesta un retiro inmediato a mi cuenta bancaria?"
@@ -54,6 +54,10 @@ The `answer` SHALL be based only on the content of the indexed documents retriev
 #### Scenario: Comparison across turns
 - **WHEN** a client asks "¿Cuánto cuesta un retiro inmediato?" and then, in the same conversation, "¿y es más caro que el retiro estándar?"
 - **THEN** the second answer compares both fees (the standard withdrawal is free), every fact in it is stated in the documents retrieved for the second question, and `sources` lists the documents those facts come from
+
+#### Scenario: Question about Nimbo is searched
+- **WHEN** a client asks a question about Nimbo's products, fees or policies
+- **THEN** at least one search runs before the answer is generated, and the answer is based on the documents it retrieved
 
 ### Requirement: Sources list the documents the answer used
 `sources` SHALL list, without duplicates, each indexed document the answer is based on, with its `id` and `title`. It MUST only contain ids of documents retrieved for that question; any other id MUST be omitted.
@@ -200,7 +204,7 @@ A question sent without `conversation_id` SHALL start a new conversation, and it
 - **THEN** their responses carry different `conversation_id` values
 
 ### Requirement: Follow-up questions use the conversation
-When answering a question that continues a conversation, the system SHALL take into account the earlier answered questions and answers of that conversation, up to its 6 most recent exchanges (an exchange is one question and its answer). Older exchanges MUST NOT be used. A conversation holds only questions and answers, never the documents retrieved for them.
+When answering a question that continues a conversation, the system SHALL take into account the earlier answered questions and answers of that conversation, up to its 6 most recent exchanges (an exchange is one question and its answer). Older exchanges MUST NOT be used. A conversation holds only questions and answers, never the searches made for them nor the documents retrieved for them.
 
 #### Scenario: Follow-up understood from the conversation
 - **WHEN** a client asks "¿Cuál es el mínimo por retiro inmediato?" and then, in the same conversation, "¿y en Chile?"
@@ -210,12 +214,32 @@ When answering a question that continues a conversation, the system SHALL take i
 - **WHEN** a conversation has 7 answered exchanges and an 8th question is sent in it
 - **THEN** the 8th answer is generated with exchanges 2 to 7 and without the first exchange
 
-### Requirement: Retrieval for follow-up questions
-For a question that continues a conversation, the indexed documents SHALL be retrieved for a self-contained question: the question rewritten so that it resolves its references to earlier exchanges and can be understood without them. The first question of a conversation SHALL be retrieved as sent.
+#### Scenario: Searches are not part of the conversation
+- **WHEN** a question is answered after a search, and a follow-up is sent in the same conversation
+- **THEN** the follow-up is generated with the earlier question and answer, and without the earlier search query or the documents it retrieved
+
+### Requirement: Help-center searches
+To answer a question, the system SHALL search the indexed documents at least once, and as many more times as it decides. It MUST write each search query itself from the question and the earlier exchanges of the conversation, so that the query is self-contained. A question SHALL get at most the configured maximum number of searches; once that number is reached, the answer MUST be generated from the documents already retrieved.
 
 #### Scenario: Referential follow-up retrieves the right document
 - **WHEN** a client asks "¿Cuánto cuesta un retiro inmediato?" and then, in the same conversation, "¿y cuánto tarda?"
 - **THEN** the second answer gives the instant withdrawal timing (minutes) and `sources` includes NIM-013
+
+#### Scenario: Question that needs two documents
+- **WHEN** a client asks "¿Cuánto cuesta un retiro inmediato y cuánto tarda?"
+- **THEN** the answer gives the instant withdrawal fee and its timing, and `sources` includes NIM-020 and NIM-013
+
+#### Scenario: Documents of every search are retrieved for the question
+- **WHEN** a question gets two searches that retrieve different documents, and the generated answer cites one document from each search
+- **THEN** the response `sources` contains both documents
+
+#### Scenario: Search limit
+- **WHEN** the configured maximum is 3 searches and more searches are requested while answering a question
+- **THEN** exactly 3 searches run and the question is answered with the documents they retrieved
+
+#### Scenario: Answer without a search has no sources
+- **WHEN** the model returns an answer before any search has run (despite the required first search), and it cites a document id
+- **THEN** the response `sources` is empty
 
 ### Requirement: Conversation expiry
 A conversation SHALL expire 15 minutes after its most recent answered question. `expires_in_seconds` MUST state the whole seconds left until the conversation expires, counted from the response. A question sent with a `conversation_id` that is unknown or expired MUST be rejected with `404` and a JSON body `{"detail": string}`, without generating an answer. A restart of the system ends every conversation.
@@ -286,8 +310,8 @@ Each event SHALL carry a JSON object in its `data` field. Zero or more `delta` e
 - **THEN** the `done` event contains the `answer`, `sources` with `{"id": "NIM-020", "title": "<NIM-020 manifest title>"}`, a `conversation_id` and `expires_in_seconds` `900`
 
 #### Scenario: Only the answer text is streamed
-- **WHEN** a follow-up question is sent to `POST /api/chat/stream`
-- **THEN** no `delta` text contains the rewritten question, the question language, the coverage or any source id
+- **WHEN** a question that gets a search is sent to `POST /api/chat/stream`
+- **THEN** no `delta` text contains the search query, the question language, the coverage or any source id
 
 #### Scenario: Same answer rules on both endpoints
 - **WHEN** the generated answer cites an id that was not among the documents retrieved for the question, sent to `POST /api/chat/stream`
