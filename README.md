@@ -89,7 +89,7 @@ Current chat model: `gpt-6-luna` with `chat_reasoning_effort: none` on Chat Comp
 | `gpt-4.1-mini` | 64/76 | 70/74 | sources 25/28, meets 25/26 | 3.3 s |
 | `gpt-6-luna` (`none`) | 74/75 | 74/75 | 100% | 4.5 s |
 
-On both runs, grounded, no_forbidden_text and searched stay at 100%. The full table and diagnosis are in `openspec/changes/switch-chat-model-gpt-6-luna/design.md`. To go back, set `models.chat: gpt-4.1-mini` and remove `models.chat_reasoning_effort` in `backend/app.yaml`.
+On both runs, grounded, no_forbidden_text and searched stay at 100%. The full table and diagnosis are in `openspec/changes/archive/2026-11-07-switch-chat-model-gpt-6-luna/design.md`. To go back, set `models.chat: gpt-4.1-mini` and remove `models.chat_reasoning_effort` in `backend/app.yaml`.
 
 Results of the earlier pipeline on 2026-10-25 (`gpt-4.1-mini`, `text-embedding-3-large`, k = 8, 1 repetition):
 
