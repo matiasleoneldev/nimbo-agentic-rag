@@ -49,8 +49,13 @@ def get_settings(request: Request) -> Settings:
 
 
 def get_chat_model(settings: Annotated[Settings, Depends(get_settings)]) -> ChatModel:
-    # Unbound: chat.py binds the search tool and the structured final answer.
-    return ChatOpenAI(model=settings.chat_model)
+    # Unbound: chat.py binds the search tool and the structured final answer. Pinned to Chat
+    # Completions: reasoning settings would otherwise route to the unverified Responses API.
+    return ChatOpenAI(
+        model=settings.chat_model,
+        reasoning_effort=settings.chat_reasoning_effort,
+        use_responses_api=False,
+    )
 
 
 def get_embeddings(settings: Annotated[Settings, Depends(get_settings)]) -> Embeddings:

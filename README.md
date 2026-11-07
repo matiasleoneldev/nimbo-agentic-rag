@@ -77,10 +77,19 @@ cd backend
 poetry run python -m evals.run_evals
 ```
 
-Runs the real agent (OpenAI, costs credits) over two LangSmith datasets, one experiment each with 3 repetitions: `support-chat-answers` (22 single questions, each in a new conversation, including compound questions that need two or three documents) and `support-chat-conversations` (8 examples: earlier turns asked live in one conversation, then the graded follow-up). Experiments are named `agentic-<chat model>-k<k>-s<max_searches>`; the baseline of the earlier fixed pipeline is `pipeline-<chat model>-k<k>` (see `openspec/changes/archive/2026-11-06-agentic-rag/design.md`). Datasets are created on the first run, and examples missing by name are added on later runs. It needs an ingested index plus `OPENAI_API_KEY`, `LANGSMITH_API_KEY` and `DATABASE_URL`. Scoring:
+Runs the real agent (OpenAI, costs credits) over two LangSmith datasets, one experiment each with 3 repetitions: `support-chat-answers` (25 single questions, each in a new conversation, including compound questions that need two to four documents) and `support-chat-conversations` (9 examples: earlier turns asked live in one conversation, then the graded follow-up). Experiments are named `agentic-<chat model>[-<reasoning effort>]-k<k>-s<max_searches>`, for example `agentic-gpt-6-luna-none-k4-s3`; the baseline of the earlier fixed pipeline is `pipeline-<chat model>-k<k>` (see `openspec/changes/archive/2026-11-06-agentic-rag/design.md`). Datasets are created on the first run, and examples missing by name are added on later runs. It needs an ingested index plus `OPENAI_API_KEY`, `LANGSMITH_API_KEY` and `DATABASE_URL`. Scoring:
 
 - Code checks: expected sources, no leaked card number, `searched` (a question about Nimbo got at least one search) and `search_count` (searches per question, reported as a mean).
 - An LLM judge (`gpt-4.1-mini`) checks grounding, language, plain text and the per-example expectation, plus voseo on Spanish examples.
+
+Current chat model: `gpt-6-luna` with `chat_reasoning_effort: none` on Chat Completions; with tools, OpenAI only accepts that effort level there. Measured on 2026-11-07 against `gpt-4.1-mini` on the same datasets (3 repetitions, summed):
+
+| | sources | meets_expectation | conversations | p50 (answers) |
+|---|---|---|---|---|
+| `gpt-4.1-mini` | 64/76 | 70/74 | sources 25/28, meets 25/26 | 3.3 s |
+| `gpt-6-luna` (`none`) | 74/75 | 74/75 | 100% | 4.5 s |
+
+On both runs, grounded, no_forbidden_text and searched stay at 100%. The full table and diagnosis are in `openspec/changes/switch-chat-model-gpt-6-luna/design.md`. To go back, set `models.chat: gpt-4.1-mini` and remove `models.chat_reasoning_effort` in `backend/app.yaml`.
 
 Results of the earlier pipeline on 2026-10-25 (`gpt-4.1-mini`, `text-embedding-3-large`, k = 8, 1 repetition):
 

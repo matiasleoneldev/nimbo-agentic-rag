@@ -17,6 +17,7 @@ class Settings:
     manifest_path: Path
     help_center_dir: Path
     chat_model: str
+    chat_reasoning_effort: str | None
     embedding_model: str
     vector_size: int
     retrieval_k: int
@@ -36,6 +37,7 @@ def load_settings(config_file: Path = CONFIG_FILE) -> Settings:
         manifest_path=root / raw["paths"]["manifest"],
         help_center_dir=root / raw["paths"]["help_center_dir"],
         chat_model=raw["models"]["chat"],
+        chat_reasoning_effort=raw["models"].get("chat_reasoning_effort"),
         embedding_model=raw["models"]["embeddings"],
         vector_size=int(raw["models"]["vector_size"]),
         retrieval_k=int(raw["retrieval"]["k"]),

@@ -18,3 +18,4 @@ def test_config_resolves_paths_from_any_cwd(
     assert settings.max_exchanges == 6
     assert settings.max_searches == 3
     assert settings.conversation_ttl_seconds == 900
+    assert settings.chat_reasoning_effort == "none"

@@ -8,7 +8,10 @@ paths:
 
 # OpenAI model ids. `vector_size` must match the embeddings model output size.
 models:
-  chat: gpt-4.1-mini
+  chat: gpt-6-luna
+  # Optional. Only for reasoning models; on Chat Completions they allow tools only with `none`.
+  # Remove it when switching back to a non-reasoning model such as gpt-4.1-mini.
+  chat_reasoning_effort: none
   embeddings: text-embedding-3-large
   vector_size: 3072
 

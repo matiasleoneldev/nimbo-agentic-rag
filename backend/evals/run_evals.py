@@ -230,6 +230,37 @@ EXAMPLES = [
         "physical one in 5 to 10 business days.",
         required=["NIM-002", "NIM-004", "NIM-060"],
     ),
+    # Compound questions for the chat model comparison (switch-chat-model-gpt-6-luna, 2026-11-07).
+    # Four topics: more than max_searches=3 allows one search each.
+    _example(
+        "fee-timing-2fa-card-es",
+        "¿Cuánto cuesta un retiro inmediato, cuánto tarda, cómo activo la verificación en dos "
+        "pasos y cómo pido la Tarjeta Nimbo?",
+        "Spanish",
+        f"Gives the instant withdrawal fee ({FEE}), says an instant withdrawal arrives in "
+        "minutes, gives the steps to turn on two-step verification (Perfil > Seguridad > "
+        "Verificación en dos pasos), and says the Nimbo card needs Level 2 verification, with a "
+        "virtual card at once and the physical one in 5 to 10 business days. Any part not covered "
+        "is stated explicitly.",
+        required=["NIM-020", "NIM-013", "NIM-004", "NIM-060"],
+    ),
+    _example(
+        "2fa-and-account-recovery-en",
+        "How do I turn on two-step verification, and what do I do if I can't log in to my account?",
+        "English",
+        "Gives the steps to turn on two-step verification and explains how to recover access to "
+        "the account (password reset link; assisted recovery with an ID photo and a selfie if the "
+        "email or phone is lost), both as described in the documents.",
+        required=["NIM-004", "NIM-003"],
+    ),
+    _example(
+        "withdrawal-minimum-two-countries-and-timing-es",
+        "¿Cuál es el mínimo por retiro inmediato en Chile y en México, y cuánto tarda?",
+        "Spanish",
+        "Gives the instant withdrawal minimum for Chile (500 CLP) and México (10 MXN), each "
+        "labeled, and says an instant withdrawal arrives in minutes.",
+        required=["NIM-020", "NIM-013"],
+    ),
 ]
 
 
@@ -311,6 +342,16 @@ CONVERSATION_EXAMPLES = [
         "Says the help center has no information about it, without answering it and without "
         "pointing to any contact channel.",
         no_information=True,
+    ),
+    # Compound follow-up (switch-chat-model-gpt-6-luna, 2026-11-07).
+    _conversation_example(
+        "compound-follow-up-es",
+        [FEE_QUESTION],
+        "¿y cuánto tarda y cómo activo la verificación en dos pasos?",
+        "Spanish",
+        "Says an instant withdrawal arrives in minutes and gives the steps to turn on two-step "
+        "verification (Perfil > Seguridad > Verificación en dos pasos).",
+        required=["NIM-013", "NIM-004"],
     ),
 ]
 
@@ -466,8 +507,17 @@ def main() -> None:
         return graded(inputs["question"], conversation_id)
 
     client = Client()
-    metadata = {"models": {"chat": settings.chat_model, "embeddings": settings.embedding_model}}
-    prefix = f"agentic-{settings.chat_model}-k{settings.retrieval_k}-s{settings.max_searches}"
+    metadata = {
+        "models": {
+            "chat": settings.chat_model,
+            "chat_reasoning_effort": settings.chat_reasoning_effort,
+            "embeddings": settings.embedding_model,
+        }
+    }
+    effort = f"-{settings.chat_reasoning_effort}" if settings.chat_reasoning_effort else ""
+    prefix = (
+        f"agentic-{settings.chat_model}{effort}-k{settings.retrieval_k}-s{settings.max_searches}"
+    )
     _run(
         client,
         DATASET,
