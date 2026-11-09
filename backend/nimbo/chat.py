@@ -9,7 +9,7 @@ import html
 import json
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, Required, TypedDict
 
 from langchain_core.documents import Document
 from langchain_core.exceptions import OutputParserException
@@ -130,13 +130,13 @@ def _search_result(documents: list[Document]) -> str:
 
 
 class ConversationState(TypedDict, total=False):
-    question: str
+    question: Required[str]
     # Per-run scratchpad, reset by the input of ask() and ask_stream(), so no reducers: the
     # tool-call AIMessages and their ToolMessages, the documents retrieved (once per id), and the
     # search queries (read by the evals).
-    steps: list[AnyMessage]
-    documents: list[Document]
-    searches: list[str]
+    steps: Required[list[AnyMessage]]
+    documents: Required[list[Document]]
+    searches: Required[list[str]]
     # A dumped ChatAnswer: the checkpointer only deserializes allowlisted types.
     answer: dict[str, Any]
     # Only questions and answers; written by the final answer alone, so failed runs never enter it.
@@ -302,4 +302,5 @@ def ask_stream(
         if isinstance(answer, str) and len(answer) > len(sent) and answer.startswith(sent):
             yield answer[len(sent) :]
             sent = answer
-    yield ChatAnswer.model_validate(state["answer"])
+    # The graph always ends at the node that writes "answer"; absent only before the final node.
+    yield ChatAnswer.model_validate(state["answer"])  # pyright: ignore[reportTypedDictNotRequiredAccess]

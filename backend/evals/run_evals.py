@@ -460,7 +460,7 @@ def _run(
     numeric: dict[str, list[float]] = {}
     for row in results:
         name = row["example"].metadata.get("name") if row["example"].metadata else "?"
-        for result in row["evaluation_results"]["results"]:
+        for result in row["evaluation_results"].get("results", []):
             if result.key in NUMERIC_METRICS:
                 numeric.setdefault(result.key, []).append(float(result.score or 0))
                 continue
