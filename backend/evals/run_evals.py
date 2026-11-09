@@ -1,12 +1,14 @@
 """Answer-quality evals on LangSmith: `python -m evals.run_evals` (run from backend/).
 
 Calls the real OpenAI models (costs credits). Needs OPENAI_API_KEY, LANGSMITH_API_KEY,
-DATABASE_URL and an ingested index. Runs two datasets, one experiment each: single
-questions, and conversations (earlier turns asked live, then the graded question). Datasets are
-created on first run; to change their examples, delete the dataset in LangSmith and run again;
-new examples (by name) are added.
+DATABASE_URL and an ingested index. Runs three datasets, one experiment each: single
+questions, conversations (earlier turns asked live, then the graded question), and small talk
+(greetings, thanks and "what can you do", plus boundary messages that must still search).
+Datasets are created on first run; to change their examples, delete the dataset in LangSmith
+and run again; new examples (by name) are added.
 """
 
+import argparse
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -24,6 +26,7 @@ from nimbo.config import ENV_FILE, load_settings, require_env
 
 DATASET = "support-chat-answers"
 CONVERSATIONS_DATASET = "support-chat-conversations"
+SMALL_TALK_DATASET = "support-chat-small-talk"
 CARD = "4111 1111 1111 1111"
 
 
@@ -36,6 +39,7 @@ def _example(
     any_of: list[str] | None = None,
     no_information: bool = False,
     must_not_contain: list[str] | None = None,
+    small_talk: bool = False,
 ) -> dict[str, Any]:
     return {
         "inputs": {"question": question},
@@ -46,6 +50,7 @@ def _example(
             "any_source_ids": any_of or [],
             "no_information": no_information,
             "must_not_contain": must_not_contain or [],
+            "small_talk": small_talk,
         },
         "metadata": {"name": name},
     }
@@ -356,10 +361,134 @@ CONVERSATION_EXAMPLES = [
 ]
 
 
+THANKS_FEE = "Does not state any fee, minimum or other fact about Nimbo."
+SMALL_TALK_REPLY = (
+    "A short reply in the question's language that does not say the help center lacks "
+    "information, and states no facts about Nimbo."
+)
+CAPABILITIES = (
+    "Says the chat answers questions about Nimbo using its help center and cannot see the "
+    "visitor's account, and states no facts about Nimbo's products, fees or policies."
+)
+EN_FEE_QUESTION = "How much does an instant withdrawal cost?"
+# Small talk (searches must be skipped) and boundary messages (must search), specified by the
+# "Small talk" requirement of support-chat-api (small-talk-without-search, 2026-11-09).
+SMALL_TALK_EXAMPLES = [
+    _conversation_example(
+        "greeting-es",
+        [],
+        "Hola",
+        "Spanish",
+        f"Greets the visitor. {SMALL_TALK_REPLY}",
+        small_talk=True,
+    ),
+    _conversation_example(
+        "greeting-en",
+        [],
+        "Hi there!",
+        "English",
+        f"Greets the visitor. {SMALL_TALK_REPLY}",
+        small_talk=True,
+    ),
+    _conversation_example(
+        "greeting-good-morning-es",
+        [],
+        "Buen día",
+        "Spanish",
+        f"Greets the visitor. {SMALL_TALK_REPLY}",
+        small_talk=True,
+    ),
+    _conversation_example(
+        "capabilities-es", [], "¿Qué podés hacer?", "Spanish", CAPABILITIES, small_talk=True
+    ),
+    _conversation_example(
+        "capabilities-en",
+        [],
+        "What can you help me with?",
+        "English",
+        CAPABILITIES,
+        small_talk=True,
+    ),
+    _conversation_example(
+        "thanks-after-answer-es",
+        [FEE_QUESTION],
+        "¡Gracias!",
+        "Spanish",
+        f"Acknowledges the thanks. {SMALL_TALK_REPLY} {THANKS_FEE}",
+        small_talk=True,
+    ),
+    _conversation_example(
+        "thanks-after-answer-en",
+        [EN_FEE_QUESTION],
+        "Thanks, that helps.",
+        "English",
+        f"Acknowledges the thanks. {SMALL_TALK_REPLY} {THANKS_FEE}",
+        small_talk=True,
+    ),
+    _conversation_example(
+        "farewell-es",
+        [FEE_QUESTION],
+        "Listo, chau",
+        "Spanish",
+        f"Says goodbye. {SMALL_TALK_REPLY} {THANKS_FEE}",
+        small_talk=True,
+    ),
+    _conversation_example(
+        "greeting-with-question-es",
+        [],
+        "Hola, ¿cuánto cuesta un retiro inmediato?",
+        "Spanish",
+        f"States the NIM-020 instant withdrawal fee: {FEE}.",
+        required=["NIM-020"],
+    ),
+    _conversation_example(
+        "greeting-with-question-en",
+        [],
+        "Hi! How do I turn on two-step verification?",
+        "English",
+        "Gives the steps to turn on two-step verification, as separate lines.",
+        required=["NIM-004"],
+    ),
+    _conversation_example(
+        "thanks-with-follow-up-es",
+        ["¿Cuál es el mínimo por retiro inmediato?"],
+        "Gracias, ¿y en Chile?",
+        "Spanish",
+        CHILE_MINIMUM,
+        required=["NIM-020"],
+    ),
+    _conversation_example(
+        "what-can-i-do-declined-payment-es",
+        [],
+        "¿Qué puedo hacer si me rechazan un pago?",
+        "Spanish",
+        "Gives the general reasons a payment can be declined, with what to do, as "
+        "described in the documents.",
+        required=["NIM-032"],
+    ),
+    _conversation_example(
+        "what-can-i-do-business-account-es",
+        [],
+        "¿Qué puedo hacer con una Cuenta de Negocios?",
+        "Spanish",
+        "Describes what a Business Account allows, as described in the documents.",
+        any_of=["NIM-050", "NIM-021"],
+    ),
+    # No document covers this question, so only `searched` and the judge grade it.
+    _conversation_example(
+        "can-you-see-my-account-es",
+        [],
+        "¿Podés ver mi cuenta?",
+        "Spanish",
+        "Says the chat cannot see the visitor's account.",
+    ),
+]
+
+
 def sources(outputs: dict[str, Any], reference_outputs: dict[str, Any]) -> dict[str, Any]:
     """Deterministic: expected source ids present (or none for no-information)."""
     ids = {s["id"] for s in outputs["sources"]}
-    if reference_outputs["no_information"]:
+    if reference_outputs["no_information"] or reference_outputs.get("small_talk"):
         return {"key": "sources", "score": not ids}
     required = set(reference_outputs["required_source_ids"])
     any_of = set(reference_outputs["any_source_ids"])
@@ -374,9 +503,16 @@ def no_forbidden_text(outputs: dict[str, Any], reference_outputs: dict[str, Any]
 
 def searched(outputs: dict[str, Any], reference_outputs: dict[str, Any]) -> dict[str, Any]:
     """A question about Nimbo is answered from at least one search (not graded off-topic)."""
-    if reference_outputs["no_information"]:
+    if reference_outputs["no_information"] or reference_outputs.get("small_talk"):
         return {"results": []}
     return {"key": "searched", "score": bool(outputs["searches"])}
+
+
+def skipped_search(outputs: dict[str, Any], reference_outputs: dict[str, Any]) -> dict[str, Any]:
+    """Small talk is answered without a search (scores small-talk examples only)."""
+    if not reference_outputs.get("small_talk"):
+        return {"results": []}
+    return {"key": "skipped_search", "score": not outputs["searches"]}
 
 
 def search_count(outputs: dict[str, Any]) -> dict[str, Any]:
@@ -434,6 +570,7 @@ def _run(
     target: Callable[[dict[str, Any]], dict[str, Any]],
     metadata: dict[str, Any],
     prefix: str,
+    repetitions: int,
 ) -> None:
     if client.has_dataset(dataset_name=dataset_name):
         dataset = client.read_dataset(dataset_name=dataset_name)
@@ -447,11 +584,11 @@ def _run(
     results = client.evaluate(
         target,
         data=dataset_name,
-        evaluators=[sources, no_forbidden_text, searched, search_count, judge],
+        evaluators=[sources, no_forbidden_text, searched, skipped_search, search_count, judge],
         experiment_prefix=prefix,
         metadata=metadata,
-        # Answers vary between runs; 3 repetitions keep pipeline vs agent differences above noise.
-        num_repetitions=3,
+        # Answers vary between runs; 3 repetitions (the default) keep differences above noise.
+        num_repetitions=repetitions,
     )
 
     # Per-metric pass rate (mean for numeric metrics), plus each failure with its example name.
@@ -475,6 +612,14 @@ def _run(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    # Gates (searched, skipped_search, ...) only count from a full run: all datasets, 3 repetitions.
+    parser.add_argument(
+        "--dataset", action="append", choices=["answers", "conversations", "small-talk"]
+    )
+    parser.add_argument("--repetitions", type=int, default=3)
+    args = parser.parse_args()
+    selected = set(args.dataset or ["answers", "conversations", "small-talk"])
     load_dotenv(ENV_FILE)
     settings = load_settings()
     engine = PGEngine.from_connection_string(url=require_env("DATABASE_URL"))
@@ -518,24 +663,39 @@ def main() -> None:
     prefix = (
         f"agentic-{settings.chat_model}{effort}-k{settings.retrieval_k}-s{settings.max_searches}"
     )
-    _run(
-        client,
-        DATASET,
-        "Nimbo support chat answers",
-        EXAMPLES,
-        answer,
-        metadata,
-        prefix,
-    )
-    _run(
-        client,
-        CONVERSATIONS_DATASET,
-        "Nimbo support chat answers to follow-up questions",
-        CONVERSATION_EXAMPLES,
-        converse,
-        metadata,
-        f"{prefix}-conversations",
-    )
+    if "answers" in selected:
+        _run(
+            client,
+            DATASET,
+            "Nimbo support chat answers",
+            EXAMPLES,
+            answer,
+            metadata,
+            prefix,
+            args.repetitions,
+        )
+    if "conversations" in selected:
+        _run(
+            client,
+            CONVERSATIONS_DATASET,
+            "Nimbo support chat answers to follow-up questions",
+            CONVERSATION_EXAMPLES,
+            converse,
+            metadata,
+            f"{prefix}-conversations",
+            args.repetitions,
+        )
+    if "small-talk" in selected:
+        _run(
+            client,
+            SMALL_TALK_DATASET,
+            "Nimbo support chat small talk and boundary messages",
+            SMALL_TALK_EXAMPLES,
+            converse,
+            metadata,
+            f"{prefix}-small-talk",
+            args.repetitions,
+        )
 
 
 if __name__ == "__main__":

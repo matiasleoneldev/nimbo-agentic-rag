@@ -458,15 +458,15 @@ def test_chat_stops_searching_at_limit(
     assert response.status_code == 200
     assert response.json()["sources"] == [{"id": "NIM-020", "title": FEE_TITLE}]
     assert embeddings.embedded_texts == ["consulta 1", "consulta 2", "consulta 3"]
-    assert [b["tool_choice"] for b in model.bound] == ["required", None, None, "none"]
+    assert [b["tool_choice"] for b in model.bound] == [None, None, None, "none"]
 
 
-def test_chat_first_turn_must_search(make_client: ClientFactory) -> None:
+def test_chat_first_turn_does_not_force_search(make_client: ClientFactory) -> None:
     model = fee_model()
 
     make_client(model).post("/api/chat", json={"question": FEE_QUESTION})
 
-    assert [b["tool_choice"] for b in model.bound] == ["required", None]
+    assert [b["tool_choice"] for b in model.bound] == [None, None]
 
 
 def test_chat_returns_503_when_model_searches_past_limit(make_client: ClientFactory) -> None:
@@ -481,8 +481,8 @@ def test_chat_returns_503_when_model_searches_past_limit(make_client: ClientFact
 def test_chat_answer_without_search_has_no_sources(
     make_client: ClientFactory, embeddings: CountingFakeEmbeddings
 ) -> None:
-    # OpenAI cannot skip the required first search; the fake ignores tool_choice, so this guards
-    # the sources filter should a model answer anyway.
+    # Answering without a search is allowed (small talk); the filter keeps such an answer
+    # source-free even if the model cites a document id.
     model = RecordingFakeChatModel(responses=[model_reply("Respuesta.", ["NIM-020"])])
 
     response = make_client(model).post("/api/chat", json={"question": FEE_QUESTION})
