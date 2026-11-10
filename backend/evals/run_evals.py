@@ -589,6 +589,8 @@ def _run(
         metadata=metadata,
         # Answers vary between runs; 3 repetitions (the default) keep differences above noise.
         num_repetitions=repetitions,
+        # Each evaluator call would be its own billed trace; scores still land as feedback.
+        disable_evaluator_tracing=True,
     )
 
     # Per-metric pass rate (mean for numeric metrics), plus each failure with its example name.

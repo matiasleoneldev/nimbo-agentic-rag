@@ -82,6 +82,8 @@ Runs the real agent (OpenAI, costs credits) over three LangSmith datasets, one e
 - Code checks: expected sources, no leaked card number, `searched` (a question about Nimbo got at least one search) and `skipped_search` (a small-talk example got no search) and `search_count` (searches per question, reported as a mean).
 - An LLM judge (`gpt-4.1-mini`) checks grounding, language, plain text and the per-example expectation, plus voseo on Spanish examples.
 
+LangSmith bills per trace. Since 2026-11-10 evaluators are not traced (`disable_evaluator_tracing=True`) to save traces: a full run sends 144 traces (48 examples x 3 repetitions, one per agent run) instead of about 1,008. Scores still land as experiment feedback and the judge's reasoning as each score's comment, but evaluator runs can't be opened and scores can't be corrected from the LangSmith UI. While iterating, `--dataset` and `--repetitions 1` cut traces further.
+
 Current chat model: `gpt-6-luna` with `chat_reasoning_effort: none` on Chat Completions; with tools, OpenAI only accepts that effort level there. Measured on 2026-11-07 against `gpt-4.1-mini` on the same datasets (3 repetitions, summed):
 
 | | sources | meets_expectation | conversations | p50 (answers) |
