@@ -20,4 +20,4 @@ Scenario traceability: this change has no spec deltas (`skip_specs: true`), so t
 
 ## 3. Documentation
 
-- [ ] 3.1 Add the CI status badge for `ci.yml` under the README title, linking to the workflow's Actions page. Add one line to the README commands section saying CI runs the same backend and frontend checks on pushes to `main` and on pull requests, and that LangSmith evals stay manual. Verify: the badge renders on the pull request's README preview and points to the passing run.
+- [x] 3.1 Add the CI status badge for `ci.yml` under the README title, linking to the workflow's Actions page. Add one line to the README commands section saying CI runs the same backend and frontend checks on pushes to `main` and on pull requests, and that LangSmith evals stay manual. Verify: the badge renders on the pull request's README preview and points to the passing run.
