@@ -54,6 +54,7 @@ A status badge for `ci.yml` goes under the README title, plus one line in the co
 - [Some test or settings path needs an env var that only exists in the local `backend/.env`] → The first CI run reveals it. Fix it by setting a non-secret placeholder in the workflow's `env`, or by fixing the test. Never by adding a real secret.
 - [Python 3.14 or Poetry 2.2.1 behaves differently on Linux than on Windows] → That is exactly what CI is meant to surface. Fix it in code, not by skipping checks.
 - [`next build` plus two Playwright projects is slow on a 2-vCPU runner] → `workers: 2` already matches the runner. The npm cache and installing only Chromium keep setup short.
+- [A hung test or a leftover thread keeps a job running until GitHub's 6-hour default] → Each job sets `timeout-minutes: 15`, several times its normal duration.
 - [Flaky E2E tests turn CI red without a real regression] → Treat the first flaky failure as a test bug. No automatic retries are added up front.
 - [The CI badge shows red publicly while `main` is broken] → Accepted: that is the point of the signal.
 

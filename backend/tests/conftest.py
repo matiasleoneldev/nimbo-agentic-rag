@@ -1,4 +1,5 @@
 import dataclasses
+import faulthandler
 import os
 import uuid
 from collections.abc import Iterator
@@ -49,3 +50,8 @@ def indexed_documents(settings: Settings, engine: PGEngine) -> list[Document]:
         engine=engine, table_name=settings.table, embedding_service=CountingFakeEmbeddings()
     )
     return store.similarity_search("", k=1000)
+
+
+def pytest_sessionfinish() -> None:
+    # TEMPORARY CI diagnostic: if a leftover thread keeps the process alive, dump it and exit.
+    faulthandler.dump_traceback_later(30, exit=True, file=2)
