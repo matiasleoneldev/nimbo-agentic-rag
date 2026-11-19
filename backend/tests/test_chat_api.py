@@ -1,5 +1,4 @@
 import dataclasses
-import faulthandler
 import json
 import threading
 import time
@@ -755,10 +754,7 @@ def cut_after_first_delta(url: str, model: PausingChatModel, body: dict[str, str
         assert response.status_code == 200
         next(line for line in response.iter_lines() if line == "event: delta")
     model.resume.set()
-    finished = model.finished.wait(timeout=10)
-    if not finished:  # TEMPORARY CI diagnostic: where the cut generation is stuck.
-        faulthandler.dump_traceback(file=2, all_threads=True)
-    assert finished
+    assert model.finished.wait(timeout=10)
     time.sleep(0.5)  # the cut run's own steps after the model call
     model.resume.clear()
     model.finished.clear()

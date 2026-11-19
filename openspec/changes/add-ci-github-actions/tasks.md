@@ -16,7 +16,7 @@ Scenario traceability: this change has no spec deltas (`skip_specs: true`), so t
     - `TEST_DATABASE_URL=postgresql+asyncpg://nimbo:nimbo@localhost:5432/nimbo_test` set in the job env.
   - Job `frontend` (`ubuntu-latest`, `working-directory: frontend`): `actions/setup-node` (22, npm cache on `frontend/package-lock.json`), then `npm ci`, `npm run lint`, `npm run typecheck`, `npx playwright install --with-deps chromium`, `npm run test:e2e`. On failure, upload `playwright-report/` and `test-results/` with `actions/upload-artifact`.
   - Verify: the YAML parses, for example with `python -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))"`, and every command in it matches one in README.md.
-- [ ] 2.2 Push the branch, open a pull request and confirm both jobs pass on GitHub. In the frontend job log, confirm Playwright ran both projects (`phone`, `desktop`). If a job fails because something only exists in the local `backend/.env`, add a non-secret placeholder to the workflow `env`, or fix the test, per the design's risks. Never add a real secret. Verify: green checks on the pull request.
+- [x] 2.2 Push the branch, open a pull request and confirm both jobs pass on GitHub. In the frontend job log, confirm Playwright ran both projects (`phone`, `desktop`). If a job fails because something only exists in the local `backend/.env`, add a non-secret placeholder to the workflow `env`, or fix the test, per the design's risks. Never add a real secret. Verify: green checks on the pull request.
 
 ## 3. Documentation
 
