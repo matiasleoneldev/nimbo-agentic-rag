@@ -1,5 +1,7 @@
 # Nimbo Help Center chat
 
+[![CI](https://github.com/matiasleoneldev/nimbo-agentic-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/matiasleoneldev/nimbo-agentic-rag/actions/workflows/ci.yml)
+
 Portfolio demo: a public RAG chat that answers questions about **Nimbo**, a fictional PayPal-like fintech, using only its (synthetic, Spanish) help-center documents. Behavior is specified in [openspec/specs/](openspec/specs/).
 
 ## Prerequisites
@@ -114,6 +116,8 @@ How the settings got here:
 - k = 6 → 8: a two-topic question diluted the query embedding.
 
 ## Backend quality gate
+
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the backend and frontend quality gates below on pushes to `main` and on pull requests, with no secrets. LangSmith evals stay manual.
 
 ```powershell
 cd backend

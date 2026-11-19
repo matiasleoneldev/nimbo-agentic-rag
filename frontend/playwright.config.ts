@@ -6,8 +6,9 @@ export default defineConfig({
   fullyParallel: true,
   // ponytail: capped; one Chromium per CPU starves a Windows laptop and page loads time out.
   workers: 2,
-  // Playwright launches Chromium unsandboxed by default; keep the sandbox as a second line of defence.
-  use: { baseURL: "http://127.0.0.1:3100", locale: "es-AR", launchOptions: { chromiumSandbox: true } },
+  // Sandbox on locally as a second line of defence; off in CI, where tests load only this app on an
+  // ephemeral runner with no secrets, and Ubuntu's AppArmor may block the sandbox.
+  use: { baseURL: "http://127.0.0.1:3100", locale: "es-AR", launchOptions: { chromiumSandbox: !process.env.CI } },
   projects: [
     { name: "phone", use: { ...devices["Desktop Chrome"], viewport: { width: 375, height: 800 } } },
     { name: "desktop", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } },
