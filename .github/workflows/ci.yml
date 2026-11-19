@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://nimbo:nimbo@localhost:5432/nimbo_test
+    services:
+      db:
+        image: pgvector/pgvector:pg17
+        env:
+          # Dev credentials, not secrets: the container lives only inside this ephemeral runner.
+          POSTGRES_USER: nimbo
+          POSTGRES_PASSWORD: nimbo
+          POSTGRES_DB: nimbo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nimbo -d nimbo_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      # Poetry must be on PATH before setup-python so its cache can key on poetry.lock.
+      - run: pipx install poetry==2.2.1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: poetry
+          cache-dependency-path: backend/poetry.lock
+      - run: psql "postgresql://nimbo:nimbo@localhost:5432/nimbo_test" -c "CREATE EXTENSION IF NOT EXISTS vector"
+      - run: poetry install
+      - run: poetry run ruff format --check .
+      - run: poetry run ruff check .
+      - run: poetry run mypy .
+      - run: poetry run pytest
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/

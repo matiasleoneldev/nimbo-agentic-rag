@@ -4,11 +4,11 @@ Scenario traceability: this change has no spec deltas (`skip_specs: true`), so t
 
 ## 1. Playwright config
 
-- [ ] 1.1 In `frontend/playwright.config.ts`, change `chromiumSandbox: true` to `chromiumSandbox: !process.env.CI`. Rewrite the comment above it so it says the sandbox stays on locally and is off in CI, with the reason in one line (the tests only load this project's own app, and the runner is ephemeral, holds no secrets and may block the sandbox through AppArmor). Verify with `npm run lint ; npm run typecheck ; npm run test:e2e` in `frontend/`: all pass locally with the sandbox still on, since `CI` is unset.
+- [x] 1.1 In `frontend/playwright.config.ts`, change `chromiumSandbox: true` to `chromiumSandbox: !process.env.CI`. Rewrite the comment above it so it says the sandbox stays on locally and is off in CI, with the reason in one line (the tests only load this project's own app, and the runner is ephemeral, holds no secrets and may block the sandbox through AppArmor). Verify with `npm run lint ; npm run typecheck ; npm run test:e2e` in `frontend/`: all pass locally with the sandbox still on, since `CI` is unset.
 
 ## 2. Workflow
 
-- [ ] 2.1 Create `.github/workflows/ci.yml` as design.md describes:
+- [x] 2.1 Create `.github/workflows/ci.yml` as design.md describes:
   - Name `CI`; triggers `push` with `branches: [main]` and an unfiltered `pull_request`; a `concurrency` group per ref with `cancel-in-progress`; `permissions: contents: read`.
   - Job `backend` (`ubuntu-latest`, `working-directory: backend`):
     - Service `pgvector/pgvector:pg17` with `POSTGRES_USER`/`POSTGRES_PASSWORD` `nimbo`, `POSTGRES_DB: nimbo_test`, port 5432 and a `pg_isready` health check.
