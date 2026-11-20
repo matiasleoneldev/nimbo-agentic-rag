@@ -14,4 +14,4 @@ Scenario traceability: this change has no spec deltas (`skip_specs: true`), so t
 
 ## 3. CI
 
-- [ ] 3.1 Commit `package.json`, `package-lock.json` (and `AGENTS.md` if changed) together on a branch, push it and open a pull request. Verify: the CI `frontend` job (`npm ci`, lint, typecheck, Playwright) and the `backend` job are green on the pull request.
+- [x] 3.1 Commit `package.json`, `package-lock.json` (and `AGENTS.md` if changed) together on a branch, push it and open a pull request. Verify: the CI `frontend` job (`npm ci`, lint, typecheck, Playwright) and the `backend` job are green on the pull request.
