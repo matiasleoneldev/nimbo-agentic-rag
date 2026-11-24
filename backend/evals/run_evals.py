@@ -538,28 +538,63 @@ class Verdict(BaseModel):
     meets_expectation: bool = Field(description="Satisfies the stated expectation.")
 
 
-def judge(
-    inputs: dict[str, Any], outputs: dict[str, Any], reference_outputs: dict[str, Any]
-) -> dict[str, Any]:
-    judge_model = ChatOpenAI(model="gpt-4.1-mini").with_structured_output(Verdict)
-    verdict = judge_model.invoke(
-        "You grade answers of a help-center chatbot for Nimbo, a fictional payments company.\n"
-        + (f"Earlier questions: {inputs['turns']}\n" if inputs.get("turns") else "")
-        + f"Question: {inputs['question']}\n"
-        f"Expected language: {reference_outputs['language']}\n"
-        f"Expectation: {reference_outputs['expectation']}\n"
-        f"Answer:\n{outputs['answer']}\n"
-        f"Cited sources: {outputs['sources']}"
-    )
-    assert isinstance(verdict, Verdict)
-    return {
-        "results": [
-            {"key": key, "score": getattr(verdict, key), "comment": verdict.reasoning}
-            for key in ("grounded", "correct_language", "voseo", "plain_text", "meets_expectation")
-            # Voseo only applies to Spanish answers.
-            if key != "voseo" or reference_outputs["language"] == "Spanish"
-        ]
-    }
+# Calibrated against gpt-4.1-mini on 2026-11-24 (change switch-eval-judge-gpt-6-luna).
+JUDGE_MODEL = "gpt-6-luna"
+# None for non-reasoning models. gpt-6-luna defaults to `medium`, so it needs an explicit value.
+JUDGE_REASONING_EFFORT: str | None = "none"
+
+
+def _cited_documents_block(documents: list[dict[str, str]]) -> str:
+    """The cited documents' text, in the agent's format; empty keeps the prompt as it was."""
+    if not documents:
+        return ""
+    blocks = "\n\n".join(f'<document id="{d["id"]}">\n{d["text"]}\n</document>' for d in documents)
+    return f"\nCited documents:\n{blocks}"
+
+
+def make_judge(
+    model: str, reasoning_effort: str | None, key_suffix: str = ""
+) -> Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]]:
+    """The LLM-as-judge evaluator; `key_suffix` keeps several judges' feedback apart."""
+
+    def judge(
+        inputs: dict[str, Any], outputs: dict[str, Any], reference_outputs: dict[str, Any]
+    ) -> dict[str, Any]:
+        # Chat Completions, as in get_chat_model: the binding the spike verified.
+        judge_model = ChatOpenAI(
+            model=model, reasoning_effort=reasoning_effort, use_responses_api=False
+        ).with_structured_output(Verdict)
+        verdict = judge_model.invoke(
+            "You grade answers of a help-center chatbot for Nimbo, a fictional payments company.\n"
+            + (f"Earlier questions: {inputs['turns']}\n" if inputs.get("turns") else "")
+            + f"Question: {inputs['question']}\n"
+            f"Expected language: {reference_outputs['language']}\n"
+            f"Expectation: {reference_outputs['expectation']}\n"
+            f"Answer:\n{outputs['answer']}\n"
+            f"Cited sources: {outputs['sources']}"
+            + _cited_documents_block(outputs.get("cited_documents") or [])
+        )
+        assert isinstance(verdict, Verdict)
+        return {
+            "results": [
+                {
+                    "key": key + key_suffix,
+                    "score": getattr(verdict, key),
+                    "comment": verdict.reasoning,
+                }
+                for key in (
+                    "grounded",
+                    "correct_language",
+                    "voseo",
+                    "plain_text",
+                    "meets_expectation",
+                )
+                # Voseo only applies to Spanish answers.
+                if key != "voseo" or reference_outputs["language"] == "Spanish"
+            ]
+        }
+
+    return judge
 
 
 def _run(
@@ -584,7 +619,14 @@ def _run(
     results = client.evaluate(
         target,
         data=dataset_name,
-        evaluators=[sources, no_forbidden_text, searched, skipped_search, search_count, judge],
+        evaluators=[
+            sources,
+            no_forbidden_text,
+            searched,
+            skipped_search,
+            search_count,
+            make_judge(JUDGE_MODEL, JUDGE_REASONING_EFFORT),
+        ],
         experiment_prefix=prefix,
         metadata=metadata,
         # Answers vary between runs; 3 repetitions (the default) keep differences above noise.
@@ -638,10 +680,14 @@ def main() -> None:
     graph = build_graph(InMemorySaver())
 
     def graded(question: str, conversation_id: str) -> dict[str, Any]:
-        """The answer, plus the search queries of the graded question."""
+        """The answer, plus the search queries and the cited documents' text (for the judge)."""
         answer = ask(graph, question, conversation_id, context).model_dump()
         state = graph.get_state({"configurable": {"thread_id": conversation_id}}).values
-        return {**answer, "searches": state["searches"]}
+        # The text the agent read. A cited id without it raises (KeyError): `agent` only keeps
+        # retrieved ids, and a gap would fail `grounded` for the wrong reason.
+        texts = {d.metadata["id"]: d.page_content for d in state["documents"]}
+        cited = [{"id": s["id"], "text": texts[s["id"]]} for s in answer["sources"]]
+        return {**answer, "searches": state["searches"], "cited_documents": cited}
 
     def answer(inputs: dict[str, Any]) -> dict[str, Any]:
         # A new conversation per example: each question is answered on its own.
@@ -659,7 +705,8 @@ def main() -> None:
             "chat": settings.chat_model,
             "chat_reasoning_effort": settings.chat_reasoning_effort,
             "embeddings": settings.embedding_model,
-        }
+        },
+        "judge": {"model": JUDGE_MODEL, "reasoning_effort": JUDGE_REASONING_EFFORT},
     }
     effort = f"-{settings.chat_reasoning_effort}" if settings.chat_reasoning_effort else ""
     prefix = (
